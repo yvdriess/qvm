@@ -1,1 +1,8 @@
 A small Measurement Calculus interpreter using libquantum as quantum simulator backend.
+
+Requires libquantum to be installed systemwide. Modify the Makefile to point to a different location than /usr/local/lib & /usr/local/include
+
+
+'qvm' asks for a single s-expression on the standard input. The QVM uses the Measurement Calculus (by Danos et al.) as an instruction set.
+example:
+  echo '((E 1 2) (M 1 0) (X 2 (q 1)))' | ./qvm
