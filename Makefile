@@ -9,7 +9,7 @@ INCPATH = -I./sexp/include -I./
 LIBPATH = -L./sexp/lib
 LIBS = -lsexp -lquantum
 
-CFLAGS = -Wall -O2 $(INCPATH) $(LIBPATH)
+CFLAGS = -std=c99 -Wall -O2 $(INCPATH) $(LIBPATH)
 
 DEST_OBJS=$(SOURCES:.c=.o)
 
