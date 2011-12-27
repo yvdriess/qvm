@@ -8,8 +8,9 @@ VPATH = sexp/lib
 INCPATH = -I./sexp/include -I./
 LIBPATH = -L./sexp/lib
 LIBS = -lsexp -lquantum
-
-CFLAGS = -std=c99 -Wall -O2 $(INCPATH) $(LIBPATH)
+OFLAGS = #-Wall -O2
+DFLAGS = -g
+CFLAGS = -std=c99 $(OFLAGS) $(DFLAGS) $(INCPATH) $(LIBPATH)
 
 DEST_OBJS=$(SOURCES:.c=.o)
 
