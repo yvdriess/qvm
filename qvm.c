@@ -1,3 +1,5 @@
+#include <fcntl.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <assert.h>
@@ -13,6 +15,7 @@
 #include <sexp_vis.h>
 #include <quantum.h>
 
+#include "libquantum/complex.h"
 #include "bitmask.h"
 
 #define STRING_SIZE (size_t)UCHAR_MAX	
@@ -29,11 +32,6 @@ typedef unsigned char qid_t;
 typedef unsigned char tangle_size_t;
 typedef unsigned char pos_t;
 
-typedef struct qid_list {
-  qid_t qid;
-  struct qid_list* rest;
-} qid_list_t;
-
 quantum_reg _proto_diag_qubit_;
 quantum_reg _proto_dual_diag_qubit_;
   quantum_matrix _cz_gate_ = 
@@ -42,6 +40,13 @@ quantum_reg _proto_dual_diag_qubit_;
 			       0,0,1,0,
 			       0,0,0,-1} };
 
+/************
+ ** TANGLE **
+ ************/
+typedef struct qid_list {
+  qid_t qid;
+  struct qid_list* rest;
+} qid_list_t;
 
 typedef struct tangle { 
   tangle_size_t size;
@@ -49,12 +54,85 @@ typedef struct tangle {
   quantum_reg qureg;
  } tangle_t;  
 
+tangle_t* init_tangle() {
+  tangle_t* tangle = (tangle_t*) malloc(sizeof(tangle_t));   //ALLOC tangle
+  tangle->size = 0;
+  tangle->qids = NULL;
+  return tangle;
+}
+
+void free_qid_list( qid_list_t* qids) {
+  qid_list_t* rest = NULL;
+  while( qids ) {
+    rest = qids->rest;
+    free( qids ); 
+    qids = rest;
+  }
+}
+
+void free_tangle( tangle_t* tangle ) {
+  free_qid_list( tangle->qids );
+  tangle->size = 0;
+  tangle->qids = NULL;
+  quantum_delete_qureg( &tangle->qureg );
+  free( tangle ); //FREE tangle
+}
+
+void print_qids( const qid_list_t* qids ) {
+  printf("[");
+  for( const qid_list_t* cons = qids;
+       cons;
+       cons=cons->rest ) {
+    printf("%d", cons->qid);
+    if( cons->rest )
+      printf(", ");
+  }
+  printf("]");
+}
+
+void print_tangle( const tangle_t* restrict tangle ) {
+  assert( tangle );
+  print_qids( tangle->qids );
+  printf(" ,\n    {\n");
+  if( tangle->qureg.size > 32 ) {
+    printf("<a large quantum state>, really print? (y/N): ");
+    /* if( getchar() == 'y' ) */
+    /*   quantum_print_qureg( tangle->qureg ); */
+  }
+  else
+    quantum_print_qureg( tangle->qureg );
+  printf("}");
+}
+
+/***********
+ ** QUBIT **
+ ***********/
 typedef struct qubit {
   tangle_t* tangle;
   qid_t qid;
   pos_t pos;
 } qubit_t;
 
+qubit_t _invalid_qubit_ = { NULL, -1, -1 };
+
+// use this function to return a correct qureg position
+//  libquantum uses an reverse order (least significant == 0)
+int get_target( const qubit_t qubit ) {
+  return qubit.tangle->size - qubit.pos - 1;
+}
+
+bool invalid( const qubit_t qubit ) {
+  return qubit.tangle == NULL;
+}
+quantum_reg* get_qureg( const qubit_t qubit ) {
+  return &qubit.tangle->qureg;
+}
+
+
+
+/**********
+ ** QMEM **
+ **********/
 typedef struct signal_map {
   // two bitfields
   //  entries : if qid has an entry, not needed for correct programs
@@ -66,24 +144,8 @@ typedef struct signal_map {
 typedef struct qmem {
   size_t size;
   signal_map_t signal_map;
-  tangle_t** tangles;
+  tangle_t* tangles[MAX_TANGLES];
 } qmem_t;
-
-qubit_t _invalid_qubit_ = { NULL, -1, -1 };
-
-bool invalid( const qubit_t qubit ) {
-  return qubit.tangle == NULL;
-}
-quantum_reg* get_qureg( const qubit_t qubit ) {
-  return &qubit.tangle->qureg;
-}
-
-tangle_t* init_tangle() {
-  tangle_t* tangle = (tangle_t*) malloc(sizeof(tangle_t));   //ALLOC tangle
-  tangle->size = 0;
-  tangle->qids = NULL;
-  return tangle;
-}
 
 
 void print_signal_map( const signal_map_t* restrict signal_map ) {
@@ -163,7 +225,7 @@ find_qubit(const qid_t qid, const qmem_t* restrict qmem) {
 qid_list_t* add_qid( const qid_t qid, qid_list_t* restrict qids ) {
   // assuming qid is NOT already in qids
   // ALLOC QUBIT LIST
-  qid_list_t* restrict new_qids = (qid_list_t*) malloc(sizeof(qid_list_t*));
+  qid_list_t* restrict new_qids = (qid_list_t*) malloc(sizeof(qid_list_t));
   new_qids->qid = qid;
   new_qids->rest = qids;
   return new_qids;
@@ -199,36 +261,6 @@ void append_qids( qid_list_t* new_qids, qid_list_t* target_qids ) {
 /* } */
 
 
-void free_qid_list( qid_list_t* qids) {
-  qid_list_t* rest = NULL;
-  while( qids ) {
-    rest = qids->rest;
-    free( qids ); 
-    qids = rest;
-  }
-}
-
-void free_tangle( tangle_t* tangle ) {
-  free_qid_list( tangle->qids );
-  quantum_delete_qureg( &tangle->qureg );
-  free( tangle ); //FREE tangle
-}
-
-void print_tangle( const tangle_t* restrict tangle ) {
-  assert( tangle );
-  printf("[");
-  for( qid_list_t* qids = tangle->qids;
-       qids;
-       qids=qids->rest ) {
-    printf("%d", qids->qid);
-    if( qids->rest )
-      printf(", ");
-  }
-  printf("] {");
-  quantum_print_qureg( tangle->qureg );
-  printf("}");
-}
-
 void print_qmem( const qmem_t* restrict qmem ) {
   assert(qmem);
   printf("qmem has %d tangles:\n  {", (int)qmem->size);
@@ -250,8 +282,10 @@ qmem_t* init_qmem() {
   qmem_t* restrict qmem = malloc(sizeof(qmem_t)); //ALLOC qmem
 
   qmem->size = 0;
-  qmem->tangles = calloc(MAX_TANGLES,sizeof(tangle_t*)); //ALLOC tangles
-
+  //qmem->tangles = calloc(MAX_TANGLES,sizeof(tangle_t*)); //ALLOC tangles
+  //memset(&qmem->tangles, 0, sizeof(tangle_t*) * MAX_TANGLES);
+  for( int i=0; i<MAX_TANGLES; ++i )
+    qmem->tangles[i] = NULL;
   qmem->signal_map = (signal_map_t){0,0};
   
   // instantiate prototypes (libquantum quregs)
@@ -269,27 +303,30 @@ qmem_t* init_qmem() {
 }
 
 void free_qmem(qmem_t* qmem) {
+  quantum_delete_qureg( &_proto_diag_qubit_ );
+  quantum_delete_qureg( &_proto_dual_diag_qubit_ );
+
   for( int i=0, tally=0 ; tally < qmem->size ; i++ ) {
     assert(i<MAX_TANGLES);
     if( qmem->tangles[i] ) {
-      free_tangle((tangle_t*)qmem->tangles[i]);
+      free_tangle(qmem->tangles[i]);
+      qmem->tangles[i] = NULL;
       ++tally;
     }
   }
-  free(qmem->tangles); //FREE tangles
+  //free(qmem->tangles); //FREE tangles
   free(qmem); //FREE qmem
 }
 
 tangle_t* get_free_tangle(qmem_t* qmem) {
+  tangle_t* restrict new_tangle = init_tangle();
+  assert(new_tangle);
   // I loop here because tangles can get de-allocated (NULL-ed)
-  printf("    searching for free tangle\n");
   for(int i=0; i<MAX_TANGLES; ++i) {
     if( qmem->tangles[i] == NULL ) {
-      printf("      found one at %d!\n",i);
-      qmem->tangles[i] = init_tangle();
-      return qmem->tangles[i];
+      qmem->tangles[i] = new_tangle;
+      return new_tangle;
     }
-    printf("      ...skipping %d\n",i);
   }
   printf("Ran out of qmem memory, too many tangles! (> %lu)\n",MAX_TANGLES);
   exit(EXIT_FAILURE);
@@ -337,11 +374,16 @@ void
 add_qubit( const qid_t qid, 
 	   tangle_t* restrict tangle) {
   assert(tangle);
-  quantum_reg* qureg = &tangle->qureg;
+  // pushes qid in front of [qids...] list
   tangle->qids = add_qid( qid, tangle->qids );
   tangle->size += 1;
   // tensor |+> to tangle
-  tangle->qureg = quantum_kronecker(&_proto_diag_qubit_,qureg);
+  const quantum_reg new_qureg = 
+    quantum_kronecker(&_proto_diag_qubit_,&tangle->qureg);
+  // out with the old
+  quantum_delete_qureg( &tangle->qureg );
+  // in with the new
+  tangle->qureg = new_qureg;
 }
 
 void 
@@ -349,15 +391,16 @@ delete_tangle( tangle_t* tangle,
 	       qmem_t* restrict qmem ) {
   assert( tangle );
   assert( tangle->qids == NULL );
-  free_tangle( tangle );
   qmem->size -= 1;
   // null the tangle entry in qmem
   for(int i=0; i<MAX_TANGLES; ++i) {
     if( qmem->tangles[i] == tangle ) {
       qmem->tangles[i] = NULL;
+      free_tangle( tangle );
       return;
     }
   }
+  free_tangle( tangle );
   printf("ERROR: I was asked to delete an unknown tangle in qmem\n");
   exit(EXIT_FAILURE);
 }
@@ -384,46 +427,58 @@ delete_qubit(const qubit_t qubit,
   *handle = qids->rest;
   tangle->size -= 1;
 
-  free(qids); // FREE QUBIT LIST
-  tangle->qids = NULL;
-  // when empty, dealloc tangle
+  free(qids); // FREE QUBIT LIST element
+ // when empty, dealloc tangle
   if( tangle->size == 0 ) {
+    tangle->qids = NULL;
     delete_tangle( tangle, qmem );
   }
 }
+
 void 
 merge_tangles(tangle_t* restrict tangle_1, 
 	      tangle_t* restrict tangle_2, 
 	      qmem_t* restrict qmem) {
   assert( tangle_1 && tangle_2 );
   tangle_1->size = tangle_1->size + tangle_2->size;
-  // append tangle_2 to tangle_1, destructively
+  // append qids of tangle_2 to tangle_1, destructively
   append_qids( tangle_2->qids, tangle_1->qids);
+  // tensor both quregs
+  const quantum_reg new_qureg = 
+    quantum_kronecker( &tangle_1->qureg, &tangle_2->qureg );
+  // out with the old
+  quantum_delete_qureg( &tangle_1->qureg );
+  quantum_delete_qureg( &tangle_2->qureg );
+  // in with the new
+  tangle_1->qureg = new_qureg;
+
   tangle_2->qids = NULL; // avoids the qid_list from being collected
-  free_tangle( tangle_2 ); //free the tangle
+  delete_tangle( tangle_2, qmem ); //free the tangle
 }
 
 void ensure_list( sexp_t* exp ) {
   CSTRING* str = NULL;
  
   if( exp->ty != SEXP_LIST ) {
-    str = snew( STRING_SIZE );
     print_sexp_cstr( &str, exp, STRING_SIZE );
     printf("ERROR: malformed expression, expecting a list expression and\
   got:\n  %s", toCharPtr( str ));
     exit(EXIT_FAILURE);
   }
+
+
 }
 
 void ensure_value( sexp_t* exp ) {
   CSTRING* str = NULL;
 
   if ( exp->ty != SEXP_VALUE ) {
-    str = snew( STRING_SIZE );
     print_sexp_cstr( &str, exp, STRING_SIZE );
     printf("ERROR: malformed expression, expecting a value expression and\
   got:\n  %s", toCharPtr( str ));
+    sdestroy( str );
     exit(EXIT_FAILURE);
+    sdestroy( str );
   }
 }
 
@@ -440,8 +495,9 @@ typedef struct angle_constant {
   double value;
 } angle_constant_t;
 
-#define ANGLE_CONSTANT_MAX_CHARS 6
-angle_constant_t _angle_constants_[] = {
+#define ANGLE_CONSTANT_MAX_CHARS 8
+#define ANGLE_CONSTANTS_MAX 32
+angle_constant_t _angle_constants_[ANGLE_CONSTANTS_MAX] = {
   {"PI",M_PI},
   {"PI/2",M_PI/2},
   {"PI/4",M_PI/4},
@@ -451,31 +507,217 @@ angle_constant_t _angle_constants_[] = {
   {"-PI/4",-M_PI/4},
   {"-PI/8",-M_PI/8}
 };
+int _angle_constants_free_ = 8;
+
+void add_new_constant(const char* name, double value) {
+  
+  if( _angle_constants_free_ > sizeof(_angle_constants_) ) {
+    printf("ERROR: I can only remember %lu angle constants, I was asked"
+	   " to add one more\n", sizeof(_angle_constants_));
+    exit(EXIT_FAILURE);
+  }
+  angle_constant_t* restrict entry = 
+    &_angle_constants_[_angle_constants_free_++];
+  entry->name = name;
+  entry->value = value;
+}
+
+double lookup_angle_constant(const char* str) {
+  if( str )
+    for( int i=0; i<_angle_constants_free_; ++i ) {
+      if( strcmp(str, _angle_constants_[i].name) == 0 )
+	return _angle_constants_[i].value;
+    }
+  return 0.0;
+}
 
 
 double get_angle( const sexp_t* exp ) {
   //I can be more advanced and add some calc functionality,
   // but I'm not that insane atm. (some lib?)
-  const double angle = atof( exp->val );
-  if( angle == 0.0 && exp->val[0] != '0') { //ohgod
+  float angle = atof( exp->val );
+  if( angle == 0.0 && exp->val[0]!='0' ) { // atof failed
+    // upper case 'str'
     char str[ANGLE_CONSTANT_MAX_CHARS];
     strcpy( str, exp->val );
     // ensure there is a termination string
     str[ANGLE_CONSTANT_MAX_CHARS-1] = 0;
     for(int i=0; str[i]; ++i) 
       str[i] = toupper(str[i]);
-    // was there a parse error?  maybe it's one of our constants
-    for( int i=0; i<sizeof(_angle_constants_)/sizeof(angle_constant_t); ++i ) {
-      if( strcmp(str, _angle_constants_[i].name) == 0 )
-	return _angle_constants_[i].value;
+
+    // maybe it is specified in the environment?
+    const char* env_result = getenv(str);
+    if( env_result ) {
+      angle = atof( env_result );
+      if( angle != 0.0 )
+	return angle;
+      else // perhaps env contains one of our internal constants?
+	return lookup_angle_constant(env_result);
     }
-    // not a recognised constant, abort
-    printf("ERROR, angle \"%s\" is not a recognised constant.\n",str);
-    exit(EXIT_FAILURE);
+    else {
+      // maybe it's one of our constants
+      angle = lookup_angle_constant(str);
+      if( angle != 0.0 ) 
+	return angle;
+      else {
+	// fallthrough: I really don't know what to do with this constant,
+	// ask for input to the user
+	printf(" angle \"%s\" is not a recognised constant, "
+	       "please insert value: \n", str);
+	scanf("%f",&angle);
+	printf(" added %s as %f\n",str,angle);
+	add_new_constant(str, angle); 
+      }
+    }
   }
   return angle;
 }
 
+/************************
+ ** QUANTUM OPERATIONS **
+ ************************/
+void qop_cz( const qubit_t qubit_1, const qubit_t qubit_2 ) {
+  const int tar1 = get_target(qubit_1);
+  const int tar2 = get_target(qubit_2);
+  assert( !(invalid(qubit_1) || invalid(qubit_2)) );
+  assert( qubit_1.tangle == qubit_2.tangle );
+
+  /* printf("Performing CZ on qubits %d and %d on tangle ",  */
+  /* 	 qubit_1.qid, qubit_2.qid); */
+  /* print_qids( qubit_1.tangle->qids ); */
+  /* printf("\n"); */
+  /* printf("  calling cz with targets %d and %d\n, ", tar1, tar2); */
+
+  // manual cz because a) libquantum's gate2 appears to be bugggy and
+  //  can be implemented optimally relatively easily, similar to cnot
+  quantum_reg* reg = get_qureg( qubit_1 );
+  MAX_UNSIGNED bitmask = 
+    ((MAX_UNSIGNED) 1 << tar1) | ((MAX_UNSIGNED) 1 << tar2);
+  for(int i=0; i<reg->size; i++)
+    {
+      /* Flip the target bit of a basis state if the control bit is set */     
+      if((reg->node[i].state & bitmask) == bitmask)
+	reg->node[i].amplitude *= -1;
+    }
+  //  quantum_gate2(tar1, tar2, _cz_gate_, get_qureg(qubit_1)); 
+}
+
+void qop_x( const qubit_t qubit ) {
+  assert( !invalid(qubit) );
+  quantum_sigma_x( get_target(qubit), get_qureg(qubit) );
+}
+
+void qop_z( const qubit_t qubit ) {
+  assert( !invalid(qubit) );
+  quantum_sigma_z( get_target(qubit), get_qureg(qubit) );
+}
+
+/* /\* value=0 is |+>, value=1 is |-> *\/ */
+/* quantum_reg */
+/* qop_diag_collapse(int pos, int value, quantum_reg reg) */
+/* { */
+/*   int i, j, k; */
+/*   int size=0; */
+/*   double d=0; */
+/*   MAX_UNSIGNED lpat=0, rpat=0, pos2; */
+/*   quantum_reg out; */
+
+/*   pos2 = (MAX_UNSIGNED) 1 << pos; */
+
+/*   /\* Eradicate all amplitudes of base states which have been ruled out */
+/*      by the measurement and get the norm of the new register *\/ */
+  
+/*   for(i=0;i<reg.size;i++) { */
+    
+/*   } */
+
+/*   /\* Build the new quantum register *\/ */
+
+/*   out.width = reg.width-1; */
+/*   out.size = size; */
+/*   out.node = calloc(size, sizeof(quantum_reg_node)); */
+
+/*   if(!out.node) */
+/*     quantum_error(QUANTUM_ENOMEM); */
+
+/*   quantum_memman(size * sizeof(quantum_reg_node)); */
+/*   out.hashw = reg.hashw; */
+/*   out.hash = reg.hash; */
+
+/*   /\* Determine the numbers of the new base states and norm the quantum */
+/*      register *\/ */
+
+/*   int new_basis = 0; */
+/*   for(i=0, j=0; i<reg.size; i++) { */
+/*     new_basis =  */
+/*       reg.node[i].state / (pos2 << 1) +  */
+/*       reg.node[i].state % pos2; */
+/*     printf("old basis: %d,  new basis: %d\n",  */
+/* 	   reg.node[i].state, */
+/* 	   new_basis); */
+/*     if( reg.node[i].state & pos2 ) { */
+/*       if( reg.node[i] == 0 ) */
+/* 	reg.node. */
+/*     } */
+      
+/*     else  */
+/*   }    */
+
+/*   for(i=0, j=0; i<reg.size; i++) */
+/*     { */
+/*       if(((reg.node[i].state & pos2) && value)  */
+/* 	 || (!(reg.node[i].state & pos2) && !value)) */
+/* 	{ */
+/* 	  for(k=0, rpat=0; k<pos; k++) */
+/* 	    rpat += (MAX_UNSIGNED) 1 << k; */
+
+/* 	  rpat &= reg.node[i].state; */
+
+/* 	  for(k=sizeof(MAX_UNSIGNED)*8-1, lpat=0; k>pos; k--) */
+/* 	    lpat += (MAX_UNSIGNED) 1 << k; */
+
+/* 	  lpat &= reg.node[i].state; */
+
+/* 	  out.node[j].state = (lpat >> 1) | rpat; */
+/* 	  out.node[j].amplitude = reg.node[i].amplitude * 1 / (float) sqrt(d); */
+	
+/* 	  j++; */
+/* 	} */
+/*     } */
+
+/*   return out; */
+
+/* } */
+
+
+/* Apply a phase kick by the angle GAMMA */
+
+void
+quantum_inv_phase_kick(int target, float gamma, quantum_reg *reg)
+{
+  int i;
+  COMPLEX_FLOAT z;
+
+  z = quantum_conj(quantum_cexp(gamma));
+  float* p = (float*)&z;
+  printf("before phase kick (z=%f,%fi):\n",p[0],p[1]);
+    quantum_print_qureg( *reg );
+  
+  
+  for(i=0; i<reg->size; i++)
+    {
+      if(reg->node[i].state & ((MAX_UNSIGNED) 1 << target))
+	reg->node[i].amplitude *= z;
+    }
+
+  printf("\nafter phase kick:\n");
+
+  //  quantum_decohere(reg);
+}
+
+/***************
+ ** EVALUATOR **
+ ***************/
 void eval_E(sexp_t* exp, qmem_t* qmem) {
   int qid1, qid2;
   qubit_t qubit_1;
@@ -504,9 +746,11 @@ void eval_E(sexp_t* exp, qmem_t* qmem) {
   qubit_2 = find_qubit( qid2, qmem );
 
   if( invalid(qubit_1) )
-    if( invalid(qubit_2) )
+    if( invalid(qubit_2) ) {
       // if both unknown, create new tangle with two |+> states
       add_dual_tangle(qid1, qid2, qmem);
+      return; // already in correct state by construction
+    }
     else
       // add qid1 to qid2's tangle
       add_qubit( qid1, qubit_2.tangle );
@@ -516,80 +760,15 @@ void eval_E(sexp_t* exp, qmem_t* qmem) {
       add_qubit( qid2, qubit_1.tangle );
     else
       if( qubit_1.tangle == qubit_2.tangle )
-	// qubit entries are already valid
-	goto perform_cz; 
+	// if not, qubit entries are already valid
+	qop_cz( qubit_1, qubit_2 );
       else
 	// both tangles are non-NULL, merge both
 	merge_tangles(qubit_1.tangle, qubit_2.tangle, qmem);
-
   // get valid qubit entries
   qubit_1 = find_qubit( qid1, qmem );
   qubit_2 = find_qubit( qid2, qmem );
-    
-  // perform CZ on resulting tangle for both qubits
- perform_cz:
-  quantum_gate2(qubit_1.pos,
-		qubit_2.pos,
-		_cz_gate_, 
-		get_qureg(qubit_1));
-}
-
-void eval_M(sexp_t* exp, qmem_t* qmem) {
-  int qid;
-  float angle = 0.0;
-  tangle_t* tangle;
-  int signal;
-  assert( qmem );
-
-  // move to the first argument
-  exp = cdr(exp);
-  if( !exp ) {
-    printf("Measurement did not have any target qubit argument\n");
-    exit(EXIT_FAILURE);
-  }
-  qid = get_qid( exp );
-  
-  // move to the second argument
-  exp = cdr(exp);
-  if( exp ) { // default is 0
-    angle = get_angle( exp );
-  }
-
-  // TODO support for signals (+ pi to angle etc)
-
-  //  printf("  Measuring qubits %d\n",qid);
-
-  qubit_t qubit = find_qubit( qid, qmem );
-  if( invalid(qubit) ) {
-    // create new qubit
-    tangle = add_tangle( qid, qmem );
-    qubit = find_qubit_in_tangle( qid, tangle );
-  }
-  // libquantum can only measure in ortho basis,
-  //  but <+|q = <0|Hq makes it diagonal
-  //  and <+_a| = <+|P_-a
-  printf("  measuring qubit %d on angle %f\n", qid, angle);
-  printf("   before + correction:\n");
-  quantum_print_qureg( qubit.tangle->qureg );
-  
-  quantum_phase_kick( qubit.pos, -angle, get_qureg( qubit ) );
-  printf("   after kick: \n");
-  quantum_print_qureg( qubit.tangle->qureg );
-
-  quantum_hadamard( qubit.pos, get_qureg( qubit ) );
-
-  printf("   measuring : \n"     );
-  quantum_print_qureg( qubit.tangle->qureg );
-  signal = quantum_bmeasure( qubit.pos, get_qureg( qubit ) );
-  printf("   result is %d\n",signal);
-  set_signal( qid, signal, &qmem->signal_map );
-
-  // remove measured qubit from memory
-  delete_qubit( qubit, qmem );
-}
-
-void parse_error_signal(const sexp_t* restrict exp) {
-
+  qop_cz( qubit_1, qubit_2 );
 }
 
 /* Parses and checks the value of the given signal(s) */
@@ -599,12 +778,15 @@ bool satisfy_signals( const sexp_t* restrict exp,
   const sexp_t* args;
   const sexp_t* first_arg;
   bool signal;
-  CSTRING* str;
+  CSTRING* str = NULL;
 
   if( exp->ty == SEXP_LIST ) {
     args = exp->list;
     if( args->ty == SEXP_VALUE )
-      if( strcmp(args->val, "q")==0 ) {
+      if( strcmp(args->val, "q")==0 || 
+	  strcmp(args->val, "Q")==0 ||
+	  strcmp(args->val, "s")==0 ||
+	  strcmp(args->val, "S")==0) {
 	first_arg = args->next;
 	return get_signal( atoi(first_arg->val), &qmem->signal_map );
       }
@@ -626,12 +808,82 @@ bool satisfy_signals( const sexp_t* restrict exp,
 	return true;
     } // otherwise, fall through to parse_error
  parse_error:
-  str = snew( STRING_SIZE );
   print_sexp_cstr( &str, exp, STRING_SIZE );
   printf("ERROR: I got confused parsing signal: %s\n", toCharPtr( str ));
-  printf("  signal syntax:  <identifier> | 0 | 1 | (q <qubit>) | (+ {<signal>}+ )\n");
+  printf("  signal syntax:  <identifier> | 0 | 1 | (q <qubit>) |"
+	 " (+ {<signal>}+ )\n");
+  sdestroy(str);
   exit(EXIT_FAILURE);
 }
+
+void eval_M(sexp_t* exp, qmem_t* qmem) {
+  int qid;
+  float angle = 0.0;
+  tangle_t* tangle;
+  int signal;
+  assert( qmem );
+
+  // move to the first argument
+  exp = cdr(exp);
+  if( !exp ) {
+    printf("Measurement did not have any target qubit argument\n");
+    exit(EXIT_FAILURE);
+  }
+  qid = get_qid( exp );
+  
+  // move to the second argument
+  exp = cdr(exp);
+  if( exp ) { // default is 0
+    angle = get_angle( exp );
+    // change angles by s- and t-signals when available
+    exp = cdr(exp);
+    if( exp ) { //s-signal, flips sign
+      if( satisfy_signals(exp, qmem) )
+	angle = -angle;
+      exp = cdr(exp);
+      if( exp )  //t-signal, adds PI to angle
+	if( satisfy_signals(exp, qmem) )
+	  angle += M_PI;
+    }
+  }
+  
+  //  printf("  Measuring qubits %d\n",qid);
+
+  qubit_t qubit = find_qubit( qid, qmem );
+  if( invalid(qubit) ) {
+    // create new qubit
+    tangle = add_tangle( qid, qmem );
+    qubit = find_qubit_in_tangle( qid, tangle );
+  }
+  // libquantum can only measure in ortho basis,
+  //  but <+|q = <0|Hq makes it diagonal
+  //  and <+_a| = <+|P_-a
+  printf("  measuring qubit %d on angle %2.4f\n", qid, angle);
+  /* printf("   before + correction:\n"); */
+  /* quantum_print_qureg( qubit.tangle->qureg ); */
+  
+  quantum_inv_phase_kick( get_target(qubit), angle, get_qureg( qubit ) );
+  printf("   after kick: \n"); 
+  quantum_print_qureg( qubit.tangle->qureg ); 
+
+  quantum_hadamard( get_target(qubit), get_qureg( qubit ) );
+  
+  printf("   measuring : \n"     );
+   quantum_print_qureg( qubit.tangle->qureg ); 
+  signal = quantum_bmeasure( get_target(qubit), get_qureg( qubit ) ); 
+
+  /* quantum_hadamard( get_target(qubit), get_qureg( qubit ) ); */
+  /* quantum_phase_kick( get_target(qubit), angle, get_qureg( qubit ) ); */
+
+  
+
+  /* printf("   result is %d\n",signal); */
+  set_signal( qid, signal, &qmem->signal_map );
+
+  // remove measured qubit from memory
+  delete_qubit( qubit, qmem );
+}
+
 
 void eval_X(sexp_t* exp, qmem_t* qmem) {
   qid_t qid;
@@ -648,6 +900,7 @@ void eval_X(sexp_t* exp, qmem_t* qmem) {
   qid = get_qid( exp );
 
   if( cdr(exp) ) { 
+    printf(" (signal was: %d)\n", satisfy_signals( cdr(exp), qmem ));
     // there is a signal argument, bail out early if not satisfied
     if( !satisfy_signals( cdr(exp), qmem ) )
       return;
@@ -659,7 +912,7 @@ void eval_X(sexp_t* exp, qmem_t* qmem) {
     tangle = add_tangle( qid, qmem );
     qubit = find_qubit_in_tangle( qid, tangle );
   }
-  quantum_sigma_x( qubit.pos, get_qureg(qubit) );
+  qop_x( qubit );
 }
 
 void eval_Z(sexp_t* exp, qmem_t* qmem) {
@@ -678,6 +931,7 @@ void eval_Z(sexp_t* exp, qmem_t* qmem) {
 
   if( cdr(exp) ) { 
     // there is a signal argument, bail out early if not satisfied
+    printf(" (signal was: %d)\n", satisfy_signals( cdr(exp), qmem ));
     if( !satisfy_signals( cdr(exp), qmem ) )
       return;
   }
@@ -688,11 +942,12 @@ void eval_Z(sexp_t* exp, qmem_t* qmem) {
     tangle = add_tangle( qid, qmem );
     qubit = find_qubit_in_tangle( qid, tangle );
   }
-  quantum_sigma_z( qubit.pos, get_qureg(qubit) );
+  qop_z( qubit );
 }
  
 // expects a list, evals the first argument and calls itself tail-recursively
 void eval( sexp_t* restrict exp, qmem_t* restrict qmem ) {
+  CSTRING* str = snew(0);
   sexp_t* command;
   sexp_t* rest;
   char opname;
@@ -702,30 +957,49 @@ void eval( sexp_t* restrict exp, qmem_t* restrict qmem ) {
   if( exp == NULL )
     return;
   
-  ensure_list( exp );
-  command = car(exp);
-  rest = cdr(exp);
+  //ensure_list( exp );
+  if( exp->ty == SEXP_LIST ) {
+    command = car(exp);
+    rest = cdr(exp);
+    print_sexp_cstr( &str, exp, STRING_SIZE );
+    printf("evaluating %s\n", toCharPtr(str));
+
+  }
+  else {
+    assert( exp->ty == SEXP_VALUE );
+    command = exp;
+    rest = NULL;
+    sexp_t tmp_list = (sexp_t){SEXP_LIST, NULL, 0, 0, exp, NULL, 0,
+			       NULL, 0};
+    //    print_sexp_cstr( &str, new_sexp_list(exp), STRING_SIZE );
+    print_sexp_cstr( &str, &tmp_list, STRING_SIZE );
+    printf("evaluating %s\n", toCharPtr(str));
+
+  }
+  
   opname = get_opname( command );
 
+  sdestroy( str );
+    
   switch ( opname ) {
   case 'E': 
-    printf("evaluating E ...\n"); 
     eval_E( command, qmem ); 
+    print_qmem(qmem);
     eval( rest, qmem ); 
     break;
   case 'M': 
-    printf("evaluating M ...\n"); 
     eval_M( command, qmem ); 
+    print_qmem(qmem);
     eval( rest, qmem ); 
     break;
   case 'X': 
-    printf("evaluating X ...\n"); 
     eval_X( command, qmem ); 
+    print_qmem(qmem);
     eval( rest, qmem ); 
     break;
   case 'Z': 
-    printf("evaluating Z ...\n"); 
     eval_Z( command, qmem );
+    print_qmem(qmem);
     eval( rest, qmem ); 
     break;
   default: 
@@ -733,36 +1007,114 @@ void eval( sexp_t* restrict exp, qmem_t* restrict qmem ) {
   }
 }
 
+bool interactive_mode( char* argv[] ) {
+  return strcmp( argv[1], "-i" ) == 0;
+}
+
+const char* input_file( int argc, char* argv[] ) {
+  for(int i=1; i<argc; ++i)
+    if( strcmp( argv[i], "-f" ) == 0 &&
+	i+1 < argc )
+      return argv[i+1];
+  return NULL;
+}
+
+
+void parse_tangle( const sexp_t* exp, qmem_t* restrict qmem ) {
+  const sexp_t* qids_exp = exp->list;
+  const sexp_t* amps_exp = exp->list->next;
+
+  sexp_to_dotfile(exp,"input.dot");
+
+  assert( qids_exp->ty == SEXP_LIST &&
+	  amps_exp->ty == SEXP_LIST );
+
+  const int num_amps = sexp_list_length(amps_exp);
+  
+  sexp_t* qids = qids_exp->list;
+  //at least one qid
+  tangle_t* tangle = get_free_tangle(qmem);
+  qmem->size += 1;
+  tangle->size = sexp_list_length(qids_exp);
+  tangle->qureg = quantum_new_qureg_size( num_amps, tangle->size  );
+  tangle->qids = add_qid( get_qid(qids), tangle->qids );
+  while(qids->next) {
+    qids=qids->next;
+    tangle->qids = add_qid( get_qid(qids), tangle->qids );
+  }
+
+  quantum_reg* reg = &tangle->qureg;
+  sexp_t* amp = amps_exp->list;
+  for( int i=0; i<num_amps ;  ++i ) {
+    reg->node[i].state = atoi(amp->list->val);
+    reg->node[i].amplitude = atof(amp->list->next->val);
+    amp=amp->next;
+  } 
+}
+
+void initialize_input_state( const char* input_file, qmem_t* qmem ) {
+  if( input_file == NULL )
+    return;
+  int fd = open( input_file, O_RDONLY );
+  sexp_iowrap_t* input_port = init_iowrap( fd );
+  sexp_t* exp = read_one_sexp(input_port);
+  parse_tangle( exp, qmem );
+  destroy_sexp( exp );
+  destroy_iowrap( input_port );
+  close(fd);  
+}
 
 int main(int argc, char* argv[]) {
   sexp_iowrap_t* input_port;
   sexp_t* mc_program;
   qmem_t* restrict qmem = init_qmem();
-  CSTRING* str = NULL;
+  CSTRING* str = snew( 0 );
+  bool interactive = false;
 
   input_port = init_iowrap( 0 );  // we are going to read from stdin
 
   if (!input_port) { 
     printf("IO ERROR\n");
-    return -1; 
+    exit(EXIT_FAILURE);
   }
 
-  // read input program
-  mc_program = read_one_sexp( input_port );
+  if( argc > 1 ) {
+    interactive = interactive_mode( argv );
+    initialize_input_state( input_file(argc, argv), qmem );
+  }
 
-  // test print
-  str = snew( STRING_SIZE );
-  print_sexp_cstr( &str, mc_program, STRING_SIZE );
-  printf("I have read: \n%s\n", toCharPtr(str) );
-
-  // emit dot file
+  if( interactive ) {
+    printf("Starting QVM in interactive mode.\n qvm> ");
+    mc_program = read_one_sexp( input_port );
+    while( mc_program ) {
+      eval( mc_program->list, qmem );
+      print_qmem( qmem );
+	printf("\n qvm> ");
+	destroy_sexp( mc_program );
+	mc_program = read_one_sexp( input_port );
+    }
+  }
+  else {
+    // read input program
+    mc_program = read_one_sexp( input_port );
+    
+    // test print
+    str = NULL;
+    print_sexp_cstr( &str, mc_program, STRING_SIZE );
+    printf("I have read: \n%s\n", toCharPtr(str) );
+    // emit dot file
   /* sexp_to_dotfile( mc_program->list, "mc_program.dot" ); */
-
-  eval( mc_program->list, qmem );
-
-  printf("Resulting quantum memory is:\n");
-  print_qmem( qmem );
-
+    
+    eval( mc_program->list, qmem );
+    
+    printf("Resulting quantum memory is:\n");
+    print_qmem( qmem );
+  }
+  
+  destroy_iowrap( input_port );
+  sdestroy( str );
+  destroy_sexp( mc_program );
+  sexp_cleanup();
   free_qmem( qmem );
   printf("ok\n");
   return 0;

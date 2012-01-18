@@ -1,4 +1,4 @@
-CC = gcc
+CC = clang #gcc
 
 SOURCES = qvm.c
 
@@ -6,11 +6,11 @@ TARGETS = qvm
 
 VPATH = sexp/lib
 INCPATH = -I./sexp/include -I./
-LIBPATH = -L./sexp/lib
+LIBPATH = #-L./sexp/lib
 LIBS = -lsexp -lquantum
-OFLAGS = #-Wall -O2
-DFLAGS = -g
-CFLAGS = -std=c99 $(OFLAGS) $(DFLAGS) $(INCPATH) $(LIBPATH)
+OFLAGS = -O0 #-Wall -O2
+DFLAGS = -g3
+CFLAGS = $(OFLAGS) $(DFLAGS) $(INCPATH) $(LIBPATH) #-std=c99
 
 DEST_OBJS=$(SOURCES:.c=.o)
 
