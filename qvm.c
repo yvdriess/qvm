@@ -1,5 +1,6 @@
 #include <fcntl.h>
 #include <unistd.h>
+#include <getopt.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <assert.h>
@@ -16,11 +17,10 @@
 #include <quantum.h>
 
 
-#include "libquantum/complex.h"
-#include "libquantum/error.h"
 //#include "libquantum/config.h"
 
 #include "bitmask.h"
+#include "qvm.h"
 
 #define STRING_SIZE (size_t)UCHAR_MAX	
 #define MAX_TANGLES (size_t)SHRT_MAX
@@ -30,11 +30,6 @@
 #define cdr next_sexp
 #define max(x,y) x < y ? x : y
 
-extern void quantum_copy_qureg(quantum_reg *src, quantum_reg *dst);
-
-typedef int qid_t;
-typedef int tangle_size_t;
-typedef int pos_t;
 
 quantum_reg _proto_diag_qubit_;
 quantum_reg _proto_dual_diag_qubit_;
@@ -84,7 +79,8 @@ void free_tangle( tangle_t* tangle ) {
 
 void print_qids( const qid_list_t* qids ) {
   printf("[");
-  for( const qid_list_t* cons = qids;
+const qid_list_t* cons = qids;
+  for( ;
        cons;
        cons=cons->rest ) {
     printf("%d", cons->qid);
@@ -300,8 +296,8 @@ qmem_t* init_qmem() {
   quantum_gate2(0, 1, _cz_gate_, &_proto_dual_diag_qubit_);  
 
   // seed RNG
-  sranddev();
-
+  //sranddev();
+  srand(time(0));
   return qmem;
 }
 
@@ -588,9 +584,13 @@ double parse_angle( const sexp_t* exp ) {
 	// ask for input to the user
 	printf(" angle \"%s\" is not a recognised constant, "
 	       "please insert value: \n", str);
-	scanf("%f",&angle);
-	printf(" added %s as %f\n",str,angle);
-	add_new_constant(str, angle); 
+	int scanresult = scanf("%lf",&angle);
+	if( scanresult ) {
+	  printf(" added %s as %lf\n",str,angle);
+	  add_new_constant(str, angle); 
+        }
+        else
+          exit(EXIT_FAILURE);
       }
     }
   }
@@ -635,7 +635,6 @@ quantum_get_state(MAX_UNSIGNED a, quantum_reg reg)
   
   return -1;   
 }
-extern void quantum_delete_qureg_hashpreserve(quantum_reg *reg);
 /* Add an element to the hash table */
 
 static inline void
@@ -892,7 +891,7 @@ bool satisfy_signals( const sexp_t* restrict exp,
 
   if( exp->ty == SEXP_LIST ) {
     args = exp->list;
-    if( args->ty == SEXP_VALUE )
+    if( args->ty == SEXP_VALUE ) {
       if( strcmp(args->val, "q")==0 || 
 	  strcmp(args->val, "Q")==0 ||
 	  strcmp(args->val, "s")==0 ||
@@ -908,7 +907,8 @@ bool satisfy_signals( const sexp_t* restrict exp,
 	    signal ^= satisfy_signals(arg, qmem);
 	  }
 	  return signal;
-	} // otherwise, fall through to parse_error
+	} 
+    }// otherwise, fall through to parse_error
   }
   else
     if( exp->ty == SEXP_VALUE ) {
@@ -1136,7 +1136,6 @@ COMPLEX_FLOAT parse_complex( const char* str ) {
 
 
 void parse_tangle( const sexp_t* exp, qmem_t* restrict qmem ) {
-  qubit_t qubit;
   const sexp_t* qids_exp = exp->list;
   const sexp_t* amps_exp = exp->list->next;
 
