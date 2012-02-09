@@ -31,6 +31,8 @@
 #define max(x,y) x < y ? x : y
 
 
+int _verbose_ = 0;
+int _alt_measure_ = 0;
 quantum_reg _proto_diag_qubit_;
 quantum_reg _proto_dual_diag_qubit_;
   quantum_matrix _cz_gate_ = 
@@ -728,11 +730,11 @@ quantum_diag_measure(int pos, double angle, quantum_reg* restrict reg)
     int j = quantum_get_state(k^pos2, *reg);
     int k_is_odd = k & pos2;
     if( i >= 0 )
-      amp += k_is_odd ? reg->node[i].amplitude * quantum_cexp(-angle) 
+      amp += k_is_odd ? -1*(reg->node[i].amplitude * quantum_cexp(-angle))
 	              : reg->node[i].amplitude;
     if( j >= 0 )
       amp += k_is_odd ? reg->node[j].amplitude 
-	              : reg->node[j].amplitude * quantum_cexp(-angle);
+	              : -1*(reg->node[j].amplitude * quantum_cexp(-angle));
     if( i >= 0 || j >= 0 ) {
       prob = quantum_prob_inline( amp );
       if( prob > limit ) {
@@ -759,7 +761,7 @@ quantum_diag_measure(int pos, double angle, quantum_reg* restrict reg)
   
   quantum_delete_qureg_hashpreserve(reg);
   *reg = out;
-  return 0;
+  return 1;
 }
 
 void qop_cz( const qubit_t qubit_1, const qubit_t qubit_2 ) {
@@ -975,21 +977,25 @@ void eval_M(sexp_t* exp, qmem_t* qmem) {
   
   //  quantum_inv_phase_kick( get_target(qubit), angle, get_qureg(qubit) );
 
-
-  quantum_phase_kick( get_target(qubit), -angle, get_qureg( qubit ) );
+  if( _alt_measure_ )
+    signal = quantum_diag_measure( get_target(qubit), 
+				   angle,
+				   get_qureg(qubit) );
+  else {
+    quantum_phase_kick( get_target(qubit), -angle, get_qureg( qubit ) );
   
-  //printf("   after kick: \n");
-  //  quantum_print_qureg( qubit.tangle->qureg );
+    //printf("   after kick: \n");
+    //  quantum_print_qureg( qubit.tangle->qureg );
 
-  quantum_hadamard( get_target(qubit), get_qureg( qubit ) );
+    quantum_hadamard( get_target(qubit), get_qureg( qubit ) );
   
-  //printf("   measuring : \n"     );
-  // quantum_print_qureg( qubit.tangle->qureg );
-  signal = quantum_bmeasure( get_target(qubit), get_qureg( qubit ) );
+    //printf("   measuring : \n"     );
+    // quantum_print_qureg( qubit.tangle->qureg );
+    signal = quantum_bmeasure( get_target(qubit), get_qureg( qubit ) );
 
-  //signal = quantum_diag_measure( get_target(qubit), angle, get_qureg(qubit) );
-
-  /* quantum_hadamard( get_target(qubit), get_qureg( qubit ) ); */
+    //signal = quantum_diag_measure( get_target(qubit), angle, get_qureg(qubit) );
+  }
+    /* quantum_hadamard( get_target(qubit), get_qureg( qubit ) ); */
   /* quantum_phase_kick( get_target(qubit), angle, get_qureg( qubit ) ); */
 
   
@@ -1100,22 +1106,26 @@ void eval( sexp_t* restrict exp, qmem_t* restrict qmem ) {
   switch ( opname ) {
   case 'E': 
     eval_E( command, qmem ); 
-    //  print_qmem(qmem);
+    if( _verbose_ )
+      print_qmem(qmem);
     eval( rest, qmem ); 
     break;
   case 'M': 
     eval_M( command, qmem ); 
-    // print_qmem(qmem);
+    if( _verbose_ )
+      print_qmem(qmem);
     eval( rest, qmem ); 
     break;
   case 'X': 
     eval_X( command, qmem ); 
-    // print_qmem(qmem);
+    if( _verbose_ )
+      print_qmem(qmem);
     eval( rest, qmem ); 
     break;
   case 'Z': 
     eval_Z( command, qmem );
-    // print_qmem(qmem);
+    if( _verbose_ )
+      print_qmem(qmem);
     eval( rest, qmem ); 
     break;
   default: 
@@ -1136,6 +1146,8 @@ COMPLEX_FLOAT parse_complex( const char* str ) {
 
 
 void parse_tangle( const sexp_t* exp, qmem_t* restrict qmem ) {
+  qubit_t qubit;
+  tangle_t* tangle = NULL;
   const sexp_t* qids_exp = exp->list;
   const sexp_t* amps_exp = exp->list->next;
 
@@ -1149,10 +1161,19 @@ void parse_tangle( const sexp_t* exp, qmem_t* restrict qmem ) {
   //at least one qid  
   sexp_t* qids = qids_exp->list;
   assert( qids && qids->val );
-  //  for( sexp_t qid_exp = qids; qid_exp; qid_exp = qid_exp->next) {
-  //  qubit = find_qubit(get_qid(qid_exp), qmem);
-  tangle_t* tangle = get_free_tangle(qmem);
-
+  for( sexp_t* qid_exp = qids; qid_exp; qid_exp = qid_exp->next) {
+    qubit = find_qubit(get_qid(qid_exp), qmem);
+    if( !invalid(qubit) ) {
+      fprintf( stderr, 
+	       "ERROR: trying to add already existing qubit "
+	       "during input file initialization (qid:%d)\n",
+	       qubit.qid );
+      exit(EXIT_FAILURE);
+    }
+  }
+  
+  tangle = get_free_tangle(qmem);
+ 
   qmem->size += 1;
   tangle->size = sexp_list_length(qids_exp);
   tangle->qureg = quantum_new_qureg_size( num_amps, tangle->size  );
@@ -1262,21 +1283,23 @@ int main(int argc, char* argv[]) {
   CSTRING* str = snew( 0 );
 
   int interactive = 0;
-  int verbose = 0;
   char* output_file = NULL;
   int program_fd;
   int c;
      
   opterr = 0;
     
-  while ((c = getopt (argc, argv, "ivf:o::")) != -1)
+  while ((c = getopt (argc, argv, "ivmf:o::")) != -1)
     switch (c)
       {
       case 'i':
 	interactive = 1;
 	break;
       case 'v':
-	verbose = 1;
+	_verbose_ = 1;
+	break;
+      case 'm':
+	_alt_measure_ = 1;
 	break;
       case 'f':
 	initialize_input_state(optarg, qmem);
