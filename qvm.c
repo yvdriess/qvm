@@ -950,7 +950,8 @@ void eval_M(sexp_t* exp, qmem_t* qmem) {
     // change angles by s- and t-signals when available
     exp = cdr(exp);
     if( exp ) { //s-signal, flips sign
-      printf("before angle correction, angle: %f\n", angle);
+      if( _verbose_ )
+	printf("before angle correction, angle: %f\n", angle);
       if( satisfy_signals(exp, qmem) )
 	angle = -angle;
       exp = cdr(exp);
@@ -971,7 +972,8 @@ void eval_M(sexp_t* exp, qmem_t* qmem) {
   // libquantum can only measure in ortho basis,
   //  but <+|q = <0|Hq makes it diagonal
   //  and <+_a| = <+|P_-a
-  printf("  measuring qubit %d on angle %2.4f\n", qid, angle);
+  if( _verbose_ )
+    printf("  measuring qubit %d on angle %2.4f\n", qid, angle);
   /* printf("   before + correction:\n"); */
   /* quantum_print_qureg( qubit.tangle->qureg ); */
   
@@ -1023,7 +1025,8 @@ void eval_X(sexp_t* exp, qmem_t* qmem) {
   qid = get_qid( exp );
 
   if( cdr(exp) ) { 
-    printf(" (signal was: %d)\n", satisfy_signals( cdr(exp), qmem ));
+    if( _verbose_ )
+      printf(" (signal was: %d)\n", satisfy_signals( cdr(exp), qmem ));
     // there is a signal argument, bail out early if not satisfied
     if( satisfy_signals( cdr(exp), qmem ) == 0)
       return;
@@ -1054,7 +1057,8 @@ void eval_Z(sexp_t* exp, qmem_t* qmem) {
 
   if( cdr(exp) ) { 
     // there is a signal argument, bail out early if not satisfied
-    printf(" (signal was: %d)\n", satisfy_signals( cdr(exp), qmem ));
+    if( _verbose_ )
+      printf(" (signal was: %d)\n", satisfy_signals( cdr(exp), qmem ));
     if( satisfy_signals( cdr(exp), qmem ) == 0 )
       return;
   }
@@ -1084,9 +1088,10 @@ void eval( sexp_t* restrict exp, qmem_t* restrict qmem ) {
   if( exp->ty == SEXP_LIST ) {
     command = car(exp);
     rest = cdr(exp);
-    print_sexp_cstr( &str, exp, STRING_SIZE );
-    printf("evaluating %s\n", toCharPtr(str));
-
+    if( _verbose_ ) {
+      print_sexp_cstr( &str, exp, STRING_SIZE );
+      printf("evaluating %s\n", toCharPtr(str));
+    }
   }
   else {
     assert( exp->ty == SEXP_VALUE );
@@ -1095,8 +1100,10 @@ void eval( sexp_t* restrict exp, qmem_t* restrict qmem ) {
     sexp_t tmp_list = (sexp_t){SEXP_LIST, NULL, 0, 0, exp, NULL, 0,
 			       NULL, 0};
     //    print_sexp_cstr( &str, new_sexp_list(exp), STRING_SIZE );
-    print_sexp_cstr( &str, &tmp_list, STRING_SIZE );
-    printf("evaluating %s\n", toCharPtr(str));
+    if( _verbose_ ) {
+      print_sexp_cstr( &str, &tmp_list, STRING_SIZE );
+      printf("evaluating %s\n", toCharPtr(str));
+    }
   }
   
   opname = get_opname( command );
@@ -1283,17 +1290,21 @@ int main(int argc, char* argv[]) {
   CSTRING* str = snew( 0 );
 
   int interactive = 0;
+  int silent = 0;
   char* output_file = NULL;
   int program_fd;
   int c;
      
   opterr = 0;
     
-  while ((c = getopt (argc, argv, "ivmf:o::")) != -1)
+  while ((c = getopt (argc, argv, "isvmf:o::")) != -1)
     switch (c)
       {
       case 'i':
 	interactive = 1;
+	break;
+      case 's':
+	silent = 1;
 	break;
       case 'v':
 	_verbose_ = 1;
@@ -1327,9 +1338,10 @@ int main(int argc, char* argv[]) {
      
   //  
 
-  printf("Initial QMEM:\n ");
-  print_qmem( qmem );
-
+  if (_verbose_) {
+    printf("Initial QMEM:\n ");
+    print_qmem( qmem );
+  }
   if( interactive ) {
     printf("Starting QVM in interactive mode.\n qvm> ");
     input_port = init_iowrap( 0 );  // we are going to read from stdin
@@ -1353,8 +1365,10 @@ int main(int argc, char* argv[]) {
     if( program_fd )
       close( program_fd );
     
-    print_sexp_cstr( &str, mc_program, STRING_SIZE );
-    printf("I have read: \n%s\n", toCharPtr(str) );
+    if (!silent) {
+      print_sexp_cstr( &str, mc_program, STRING_SIZE );
+      printf("I have read: \n%s\n", toCharPtr(str) );
+    }
     // emit dot file
     /* sexp_to_dotfile( mc_program->list, "mc_program.dot" ); */
     
@@ -1373,8 +1387,10 @@ int main(int argc, char* argv[]) {
     }
   }
   
-  printf("Resulting quantum memory is:\n");
-  print_qmem( qmem );
+  if (!silent) {
+    printf("Resulting quantum memory is:\n");
+    print_qmem( qmem );
+  }
 
   if( output_file ) {
     produce_output_file(output_file, qmem);
