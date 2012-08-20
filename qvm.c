@@ -730,11 +730,11 @@ quantum_diag_measure(int pos, double angle, quantum_reg* restrict reg)
     int j = quantum_get_state(k^pos2, *reg);
     int k_is_odd = k & pos2;
     if( i >= 0 )
-      amp += k_is_odd ? -1*(reg->node[i].amplitude * quantum_cexp(-angle))
+      amp += k_is_odd ? -(reg->node[i].amplitude * quantum_cexp(-angle))
 	              : reg->node[i].amplitude;
     if( j >= 0 )
       amp += k_is_odd ? reg->node[j].amplitude 
-	              : -1*(reg->node[j].amplitude * quantum_cexp(-angle));
+	              : -(reg->node[j].amplitude * quantum_cexp(-angle));
     if( i >= 0 || j >= 0 ) {
       prob = quantum_prob_inline( amp );
       if( prob > limit ) {
@@ -753,15 +753,22 @@ quantum_diag_measure(int pos, double angle, quantum_reg* restrict reg)
     if(out.node == NULL) 
       quantum_error(QUANTUM_ENOMEM);
   }
-  // normalize
-  norm = sqrt(norm);
-  if( abs(1-norm) > limit )
-    for( int i=0; i<out.size; ++i )
-      //           out.node[i].amplitude /= norm;
+  // normalize, turned off
+  /* norm = sqrt(norm); */
+  /* if( abs(1-norm) > limit ) */
+  /*   for( int i=0; i<out.size; ++i ) */
+  /*     out.node[i].amplitude /= norm; */
   
   quantum_delete_qureg_hashpreserve(reg);
   *reg = out;
   return 1;
+
+
+  /* METHOD 2: suggestion
+      loop through all amplitudes
+      
+  */
+
 }
 
 void qop_cz( const qubit_t qubit_1, const qubit_t qubit_2 ) {
