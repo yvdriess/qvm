@@ -4,19 +4,14 @@
   :name "qvm"
   :file "Project.ede"
   :targets (list 
-   (ede-proj-target-makefile-program "build"
+   (ede-proj-target-makefile-program "qvm"
     :name "qvm"
     :path ""
     :source '("qvm.c")
-    :auxsource '("quantum.h")
-    :compiler 'ede-gcc-compiler
     :configuration-variables 'nil
-    :ldlibs-local '("")
-    :ldflags '("-Lsexp/lib/")
-    :ldlibs '("m" "sexp")
     )
    )
   :makefile-type 'Makefile.am
-  :variables '(("AM_CFLAGS" . "-std=c99 -Isexp/include/"))
+  :variables '(("AM_CPPFLAGS" . "-Isexp/include/"))
   :configuration-variables 'nil
   )

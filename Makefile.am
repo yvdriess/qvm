@@ -5,7 +5,7 @@
 # EDE is the Emacs Development Environment.
 # http://cedet.sourceforge.net/ede.shtml
 #
-AM_CFLAGS=-std=c99 -Isexp/include/
+AM_CPPFLAGS=-Isexp/include/
 
 top="$(CURDIR)"/
 ede_FILES=Project.ede Makefile.am
@@ -14,6 +14,6 @@ SUBDIRS=
 EXTRA_DIST=Project.ede
 bin_PROGRAMS=qvm
 qvm_SOURCES=qvm.c
-qvm_LDADD=  -Lsexp/lib/ -lm -lsexp
+qvm_LDADD=
 
 # End of Makefile.am
