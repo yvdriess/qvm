@@ -14,7 +14,7 @@
 
 typedef complex float amplitude;
 
-typedef uint8_t qid_t;
+typedef unsigned int qid_t;
 typedef uint8_t tangle_size_t;
 typedef size_t  pos_t;
 

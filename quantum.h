@@ -59,7 +59,6 @@ void quantum_normalize( quantum_state_t * restrict qstate ) {
     }
 }
 
-
 quantum_state_t* quantum_kronecker( const quantum_state_t * restrict qstate1, 
  				    const quantum_state_t * restrict qstate2,
 				          quantum_state_t * restrict out ) {
@@ -79,11 +78,15 @@ quantum_state_t* quantum_kronecker( const quantum_state_t * restrict qstate1,
 char* binrep(unsigned int val, char *buff, int sz);
 
 void quantum_print_amplitude( const quantum_state_t * qstate, size_t index ) {
+  const double limit = 1.0e-8;
+  const amplitude z = qstate->vector[index];
+  const double prob = quantum_prob(z);
   char buffer[65];
   assert( index < num_amplitudes(qstate) );
-  amplitude z = qstate->vector[index];
-  printf( " %f %+fi|%s> (%e)\n", 
-	  creal(z), cimag(z), binrep(index, buffer, qstate->size), cabs(z) );
+  if( prob > limit )
+    printf( "% f %+fi|%zd> (%e) (|%s>)\n", 
+	    creal(z), cimag(z), index, 
+	    quantum_prob(z), binrep(index, buffer, qstate->size) );
 }
 
 void quantum_print_qstate( const quantum_state_t * qstate ) {

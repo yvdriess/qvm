@@ -185,8 +185,8 @@ void set_signal( const qid_t qid,
 		 const bool signal, 
 		 signal_map_t* signal_map ) {
   if( BITTEST(signal_map->entries, qid) ) {
-    printf( "ERROR: I was asked to set an already existing signal,\n\
-  check quantum program correctness.\n");
+    printf( "ERROR: I was asked to set an already existing signal (qid: %d),\n\
+  check quantum program correctness.\n", qid);
     printf( "   signal map:\n     ");
     print_signal_map( signal_map );
     exit(EXIT_FAILURE);
@@ -463,20 +463,20 @@ merge_tangles( tangle_t * restrict tangle_1,
   // append qids of tangle_2 to tangle_1, destructively
   append_qids( tangle_2->qids, tangle_1->qids);
   // tensor both qstates
-  quantum_state_t * restrict qstate_1 = &tangle_1->qstate;
-  quantum_state_t * restrict qstate_2 = &tangle_2->qstate;
-  quantum_state_t new_qstate = (quantum_state_t){0,NULL};
-  tangle_size_t   new_size   = tangle_1->size + tangle_2->size;
-  assert( new_size = qstate_1->size + qstate_2->size );
+  const tangle_size_t              new_size = tangle_1->size + tangle_2->size;
+        quantum_state_t * restrict qstate_1 = &tangle_1->qstate;
+        quantum_state_t * restrict qstate_2 = &tangle_2->qstate;
+        quantum_state_t          new_qstate = (quantum_state_t){0,NULL};
+  assert( new_size == qstate_1->size + qstate_2->size );
   init_quantum_state( &new_qstate, new_size );
   quantum_kronecker( qstate_1, qstate_2, &new_qstate );
   // out with the old
   free_quantum_state( qstate_1 );
+  tangle_2->qids = NULL; // avoids its qid_list nodes (now managed by tangle_1) from being freed
   delete_tangle( tangle_2, qmem ); //free the tangle
   // in with the new
   tangle_1->qstate = new_qstate;
-  tangle_1->size = tangle_1->size + tangle_2->size;
-  tangle_2->qids = NULL; // avoids its qid_list nodes (which are now on tangle_1) from being freed
+  tangle_1->size   = new_size;
 }
 
 void ensure_list( sexp_t* exp ) {
@@ -655,7 +655,7 @@ quantum_diag_measure( qid_t pos, double angle,
   //  1) loop through 'even' blocks, copy the blocks to the result
   //  2) loop through 'odd' blocks, multiply and add to result
  
-  const amplitude factor = cexp(-angle);
+  const amplitude factor = cexp(-angle*I);
 
   // Method 1: nested loop per two blocks
   for( pos_t even_block=0, odd_block=block_size, out_block=0 ;
@@ -664,7 +664,7 @@ quantum_diag_measure( qid_t pos, double angle,
     for( pos_t i=0 ; i<block_size ; ++i ) {
       amplitude even = qstate->vector[even_block+i];
       amplitude odd  = qstate->vector[odd_block+i];
-      out->vector[out_block+i] = even + odd * factor;
+      out->vector[out_block+i] = even - odd * factor;
     }
   }
   
@@ -889,9 +889,8 @@ void eval_M(sexp_t* exp, qmem_t* qmem) {
   if( tangle->size > 1 ) {
     quantum_state_t new_state;
     quantum_state_t* qstate = &(tangle->qstate);
-    const qid_t qid = get_target(qubit);
     init_quantum_state( &new_state, qstate->size - 1 );
-    signal = quantum_diag_measure( qid, angle, qstate, &new_state );
+    signal = quantum_diag_measure( get_target(qubit), angle, qstate, &new_state );
     // out with the old
     free_quantum_state( qstate );
     // in with the new
