@@ -658,6 +658,7 @@ quantum_diag_measure( qid_t pos, double angle,
   const amplitude factor = cexp(-angle*I);
 
   // Method 1: nested loop per two blocks
+  #pragma omp parallel for
   for( pos_t even_block=0, odd_block=block_size, out_block=0 ;
        even_block < num_amplitudes(qstate) ; 
        even_block += block_stride, odd_block += block_stride, out_block += block_size) {

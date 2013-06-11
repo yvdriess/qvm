@@ -66,6 +66,7 @@ quantum_state_t* quantum_kronecker( const quantum_state_t * restrict qstate1,
   const size_t siz2 = num_amplitudes(qstate2);
   assert( qstate1->size + qstate2->size == out->size );
   assert( num_amplitudes(out) == siz1*siz2);
+  #pragma omp parallel for
   for( pos_t i1=0; i1<siz1; ++i1 ) {
     const pos_t block_idx = i1 * siz2;
     memcpy( out->vector+block_idx, qstate2->vector, sizeof(amplitude)*siz2 );
