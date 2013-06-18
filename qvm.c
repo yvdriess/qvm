@@ -665,6 +665,8 @@ quantum_diag_measure( qid_t pos, double angle,
   //   |         |         |
   //             ^---------^ : block_stride
   //odd_block=block_size, out_block=0;
+
+
 #pragma omp parallel for collapse(2)
   for( pos_t even_block=0;
        even_block < num_amplitudes(qstate) ; 
@@ -676,10 +678,11 @@ quantum_diag_measure( qid_t pos, double angle,
       const amplitude odd  = qstate->vector[odd_block+i];
       out->vector[out_block+i] = even - odd * factor;
     }
-    
   }
+
+
+
   
-  // Method 2: by blocks
   /* for( pos_t in_idx=0, out_idx=0; in_idx < num_amplitudes(qstate); in_idx += block_stride, out_idx += block_size ) { */
   /*   // 'even' block */
   /*   memcpy( out->vector+out_idx, qstate->vector+in_idx, stride ); */
@@ -1199,7 +1202,10 @@ int main(int argc, char* argv[]) {
      
   opterr = 0;
   init_qmem( &qmem );
-    
+  if( str == NULL) {
+    printf("couldn't alloc cstring\n"); abort();
+    //    sexp_errno
+  }
   while ((c = getopt (argc, argv, "isvmf:o::")) != -1)
     switch (c)
       {

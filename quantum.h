@@ -12,6 +12,10 @@
 
 typedef float complex amplitude;
 
+#ifndef PREFETCH_DISTANCE
+#define PREFETCH_DISTANCE 24
+#endif
+
 /* warning, quantum state size is the number of qubits
  * NOT the number of amplitudes, which is always 2^size */
 typedef struct quantum_state {
