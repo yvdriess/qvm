@@ -1194,7 +1194,7 @@ int main(int argc, char* argv[]) {
 
   int silent = 0;
   char* output_file = NULL;
-  int program_fd;
+  int program_fd = 0;
   int c;
      
   opterr = 0;
@@ -1264,9 +1264,11 @@ int main(int argc, char* argv[]) {
       open(argv[optind], O_RDONLY) : // open the file
       0;                             // otherwise, use stdin
     input_port = init_iowrap( program_fd );
+    if( input_port == NULL ) {
+      printf(" ERROR while wrapping i/o, sexp_errno code is: %d\n", sexp_errno);
+      abort();
+    }
     mc_program = read_one_sexp( input_port );
-    if( program_fd )
-      close( program_fd );
     
     if (!silent) {
       print_sexp_cstr( &str, mc_program, STRING_SIZE );
@@ -1276,6 +1278,8 @@ int main(int argc, char* argv[]) {
     /* sexp_to_dotfile( mc_program->list, "mc_program.dot" ); */
     
     eval( mc_program->list, &qmem );
+    if( program_fd )
+      close( program_fd );
   }
 
   //normalize at the end, not during measurement

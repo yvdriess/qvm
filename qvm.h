@@ -12,8 +12,6 @@
 #include <stdint.h>
 #include <complex.h>
 
-typedef complex float amplitude;
-
 typedef unsigned int qid_t;
 typedef uint8_t tangle_size_t;
 typedef size_t  pos_t;
