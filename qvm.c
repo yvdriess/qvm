@@ -676,18 +676,11 @@ quantum_diag_measure( qid_t pos, double angle,
       const amplitude odd  = qstate->vector[odd_block+i];
       out->vector[out_block+i] = even - odd * factor;
     }
-    
   }
-  
-  // Method 2: by blocks
-  /* for( pos_t in_idx=0, out_idx=0; in_idx < num_amplitudes(qstate); in_idx += block_stride, out_idx += block_size ) { */
-  /*   // 'even' block */
-  /*   memcpy( out->vector+out_idx, qstate->vector+in_idx, stride ); */
-  /*   // 'odd' block */
-  /*   for( pos_t i=0; i < block_size, ++i ) { */
-  /*     out->vector[out_idx+i] = out->vector[out_idx+i] + qstate->vector[in_idx+block_size+i] * factor; */
-  /*   } */
-  /* } */
+
+  // Method 2: permutation step to collect contiguously accessed blocks
+  // two permutations: a gather operation followed by block permutation (block permutation is achieved by prefetching/blocked access)
+
   
   return 1;
 }
