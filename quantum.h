@@ -9,15 +9,19 @@
 #include <complex.h>
 #include <assert.h>
 #include <stdint.h>
+#include <math.h>
 
 typedef float complex amplitude;
 
 /* warning, quantum state size is the number of qubits
  * NOT the number of amplitudes, which is always 2^size */
 typedef struct quantum_state {
-  uint8_t     size;
+  uint8_t      size;
+  uint8_t     cycled;
   amplitude * vector;
 } quantum_state_t;
+
+static quantum_state_t _the_empty_qstate_ = {0,0,NULL};
 
 size_t num_amplitudes( const quantum_state_t * restrict qstate ) {
   return 1 << qstate->size;
@@ -26,6 +30,7 @@ size_t num_amplitudes( const quantum_state_t * restrict qstate ) {
 quantum_state_t * init_quantum_state( quantum_state_t * qstate, uint8_t size ) {
   assert( qstate != NULL && size >= 0 );
   qstate->size = size;
+  qstate->cycled = 0;
   qstate->vector = calloc( num_amplitudes(qstate), sizeof(amplitude) );
   return qstate;
 }
@@ -59,6 +64,28 @@ void quantum_normalize( quantum_state_t * restrict qstate ) {
     }
 }
 
+  
+int permute(const int i, const int m, const int n) {
+  return n * ( i % m ) + i / m;
+}
+
+void cycle(const quantum_state_t * restrict in, 
+	   const int                        cycle,
+	         quantum_state_t * restrict out) {
+  assert( in );
+  assert( out );
+  assert( in->size == out->size );
+  uint8_t old_cycle = in->cycled;
+  uint8_t      size = in->size;
+  uint8_t new_cycle = abs(old_cycle + cycle) % size;
+  out->cycled = new_cycle;
+
+  // dumb permutation to start with
+  for( int i=0; i<num_amplitudes(in); ++i ) {
+    out->vector[i] = in->vector[permute(i,  1<<new_cycle, 1<<(size - new_cycle) )];
+  }
+}
+
 quantum_state_t* quantum_kronecker( const quantum_state_t * restrict qstate1, 
  				    const quantum_state_t * restrict qstate2,
 				          quantum_state_t * restrict out ) {
@@ -80,7 +107,10 @@ char* binrep(unsigned int val, char *buff, int sz);
 
 void quantum_print_amplitude( const quantum_state_t * qstate, size_t index ) {
   const double limit = 1.0e-8;
-  const amplitude z = qstate->vector[index];
+  const size   = num_amplitudes(qstate);
+  const stride = 1 << qstate->cycled;
+  const size_t permuted_index = permute(index, size - stride, stride);
+  const amplitude z = qstate->vector[permuted_index];
   const double prob = quantum_prob(z);
   char buffer[65];
   assert( index < num_amplitudes(qstate) );

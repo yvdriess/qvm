@@ -60,7 +60,7 @@ typedef struct tangle {
 
 tangle_t* init_tangle() {
   tangle_t *restrict tangle = malloc( sizeof(tangle_t) );
-  *tangle = (tangle_t){0,NULL,{0,NULL}};
+  *tangle = (tangle_t){0,NULL,_the_empty_qstate_};
   return tangle;
 }
 
@@ -138,6 +138,11 @@ bool invalid( const qubit_t qubit ) {
 
 quantum_state_t* get_qstate( const qubit_t qubit ) {
   return &qubit.tangle->qstate;
+}
+
+void set_qstate( qubit_t         qubit, 
+		 quantum_state_t new_state ) {
+  qubit.tangle->qstate = new_state;
 }
 
 /**********
@@ -389,7 +394,7 @@ add_tangle( const qid_t qid,
 void
 add_qubit( const qid_t qid, 
 	   tangle_t* restrict tangle) {
-  quantum_state_t  new_qstate = (quantum_state_t){0,NULL};
+  quantum_state_t  new_qstate = _the_empty_qstate_;
   quantum_state_t* old_qstate = &(tangle->qstate);
   assert(tangle);
   init_quantum_state( &new_qstate, old_qstate->size + 1 );
@@ -466,7 +471,7 @@ merge_tangles( tangle_t * restrict tangle_1,
   const tangle_size_t              new_size = tangle_1->size + tangle_2->size;
         quantum_state_t * restrict qstate_1 = &tangle_1->qstate;
         quantum_state_t * restrict qstate_2 = &tangle_2->qstate;
-        quantum_state_t          new_qstate = (quantum_state_t){0,NULL};
+        quantum_state_t          new_qstate = _the_empty_qstate_;
   assert( new_size == qstate_1->size + qstate_2->size );
   init_quantum_state( &new_qstate, new_size );
   quantum_kronecker( qstate_1, qstate_2, &new_qstate );
@@ -680,8 +685,6 @@ quantum_diag_measure( qid_t pos, double angle,
 
   // Method 2: permutation step to collect contiguously accessed blocks
   // two permutations: a gather operation followed by block permutation (block permutation is achieved by prefetching/blocked access)
-
-  
   return 1;
 }
 
@@ -694,7 +697,8 @@ void qop_cz( const qubit_t qubit_1, const qubit_t qubit_2 ) {
   quantum_state_t * restrict qstate = get_qstate( qubit_1 );
   const size_t bitmask = 
     (1 << tar1) | (1 << tar2);
-  #pragma omp parallel for
+
+#pragma omp parallel for
   for( int i=0 ; i<num_amplitudes(qstate) ; i++ ) {
     /* Flip the target bit of a basis state if the control bit is set */     
     if( (i & bitmask) == bitmask )
@@ -706,21 +710,38 @@ void qop_x( const qubit_t qubit ) {
   assert( !invalid(qubit) );
   const qid_t target = get_target(qubit);
   quantum_state_t * restrict qstate = get_qstate(qubit);
-  const pos_t block_size   = 1 << target;
-  const pos_t block_stride = 1 << (target + 1);
-  // Method 1: nested loop per two blocks
-  #pragma omp parallel for
-  for( pos_t even_block=0;
-       even_block < num_amplitudes(qstate) ; 
-       even_block += block_stride ) {
-    amplitude tmp[block_size];
-    const pos_t odd_block = even_block + block_size;
-    // swap, using tmp as scratchpad
-    //  TODO : might be interesting to see if three for loops might give gcc the chance to better optimize
-    memcpy( tmp,                       qstate->vector+even_block, sizeof(amplitude)*block_size );
-    memcpy( qstate->vector+even_block, qstate->vector+odd_block,  sizeof(amplitude)*block_size );
-    memcpy( qstate->vector+odd_block,  tmp,                       sizeof(amplitude)*block_size );
+  /* const pos_t block_size   = 1 << target; */
+  /* const pos_t block_stride = 1 << (target + 1); */
+  /* // Method 1: nested loop per two blocks */
+  /* #pragma omp parallel for*/
+  /* for( pos_t even_block=0; */
+  /*      even_block < num_amplitudes(qstate) ;  */
+  /*      even_block += block_stride ) { */
+  /*   amplitude tmp[block_size]; */
+  /*   const pos_t odd_block = even_block + block_size; */
+  /*   // swap, using tmp as scratchpad */
+  /*   //  TODO : might be interesting to see if three for loops might give gcc the chance to better optimize */
+  /*   memcpy( tmp,                       qstate->vector+even_block, sizeof(amplitude)*block_size ); */
+  /*   memcpy( qstate->vector+even_block, qstate->vector+odd_block,  sizeof(amplitude)*block_size ); */
+  /*   memcpy( qstate->vector+odd_block,  tmp,                       sizeof(amplitude)*block_size ); */
+  /* } */
+
+  quantum_state_t out;
+  init_quantum_state( &out, qstate->size );
+
+  cycle( qstate, target, &out );
+  quantum_print_qstate( qstate );
+  quantum_print_qstate( &out );
+  
+#pragma omp parallel for
+  for( pos_t i=0; i<num_amplitudes(qstate); i+=2 ) {
+    amplitude tmp = out.vector[i];
+    out.vector[i] = out.vector[i+1];
+    out.vector[i+1] = tmp;
   }
+
+  free_quantum_state( qstate );
+  set_qstate( qubit, out );
 }  
 
 void qop_z( const qubit_t qubit ) {
@@ -730,7 +751,7 @@ void qop_z( const qubit_t qubit ) {
   const pos_t block_size   = 1 << target;
   const pos_t block_stride = 1 << (target + 1);
   // Method 1: nested loop per two blocks
-  #pragma omp parallel for
+#pragma omp parallel for collapse(2)
   for( pos_t even_block=0;
        even_block < num_amplitudes(qstate) ; 
        even_block += block_stride ) {
