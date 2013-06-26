@@ -70,19 +70,25 @@ int permute(const int i, const int m, const int n) {
 }
 
 void cycle(const quantum_state_t * restrict in, 
-	   const int                        cycle,
+	   const int                     cycle,
 	         quantum_state_t * restrict out) {
   assert( in );
   assert( out );
   assert( in->size == out->size );
-  uint8_t old_cycle = in->cycled;
-  uint8_t      size = in->size;
-  uint8_t new_cycle = abs(old_cycle + cycle) % size;
-  out->cycled = new_cycle;
-
+  const uint8_t old_cycle = in->cycled;
+  const uint8_t      size = in->size;
+  // to_cycle: how much times do I need to left cycle such that we achieve 'cycle' perm.
+  //    P_k P_l = P_(k+l)%n;  
+  // taking x = to_cycle, k = old_cycle, l = cycle and n = size:
+  //    P_k P_x = P_l  ==> P_x = P_(n-k) P_l ==> P_x = P_(n-k+l)
+  const uint8_t  to_cycle = abs(size - old_cycle + cycle) % size;
+  const size_t     stride = 1<<to_cycle;
+  const size_t  blocksize = 1<<(size - to_cycle);
+  out->cycled = cycle;
   // dumb permutation to start with
   for( int i=0; i<num_amplitudes(in); ++i ) {
-    out->vector[i] = in->vector[permute(i,  1<<new_cycle, 1<<(size - new_cycle) )];
+    size_t p_i = permute( i, stride, blocksize );
+    out->vector[i] = in->vector[p_i];
   }
 }
 
@@ -106,10 +112,11 @@ quantum_state_t* quantum_kronecker( const quantum_state_t * restrict qstate1,
 char* binrep(unsigned int val, char *buff, int sz);
 
 void quantum_print_amplitude( const quantum_state_t * qstate, size_t index ) {
-  const double limit = 1.0e-8;
-  const size   = num_amplitudes(qstate);
-  const stride = 1 << qstate->cycled;
-  const size_t permuted_index = permute(index, size - stride, stride);
+  const double          limit = 1.0e-8;
+  const size_t           size = num_amplitudes(qstate);
+  const size_t         stride = 1 << qstate->cycled;
+  const size_t      blocksize = 1 << (size - qstate->cycled);
+  const size_t permuted_index = permute(index, blocksize, stride);
   const amplitude z = qstate->vector[permuted_index];
   const double prob = quantum_prob(z);
   char buffer[65];

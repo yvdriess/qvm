@@ -727,10 +727,14 @@ void qop_x( const qubit_t qubit ) {
   /* } */
 
   quantum_state_t out;
-  init_quantum_state( &out, qstate->size );
-
-  cycle( qstate, target, &out );
+  const uint8_t size = qstate->size;
+  init_quantum_state( &out, size );
+  // how many cyclic left shifts do I need to put target at pos. 0
+  uint8_t cycle_shift_by = (size - target) % size;
+  cycle( qstate, cycle_shift_by, &out );
+  printf("BEFORE: \n");
   quantum_print_qstate( qstate );
+  printf("AFTER: \n");
   quantum_print_qstate( &out );
   
 #pragma omp parallel for
