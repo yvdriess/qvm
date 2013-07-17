@@ -1002,10 +1002,13 @@ void eval_M(sexp_t* exp, qmem_t* qmem) {
     // quantum_print_qureg( qubit.tangle->qureg );
     signal = quantum_bmeasure( get_target(qubit), get_qureg( qubit ) );
 
+    // this should be performed, wtf
+    /* quantum_hadamard( get_target(qubit), get_qureg( qubit ) ); */
+    /* quantum_phase_kick( get_target(qubit), angle, get_qureg( qubit ) ); */
+
     //signal = quantum_diag_measure( get_target(qubit), angle, get_qureg(qubit) );
   }
-    /* quantum_hadamard( get_target(qubit), get_qureg( qubit ) ); */
-  /* quantum_phase_kick( get_target(qubit), angle, get_qureg( qubit ) ); */
+
 
   
 
