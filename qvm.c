@@ -115,6 +115,38 @@ void print_tangle( const tangle_t* tangle ) {
   printf("}\n");
 }
 
+// destructively permutes the qid list, cyclically shifting 'cycle' elements to the left
+qid_list_t* cycle_qid_list( qid_list_t * qids, unsigned int cycle ) {
+  qid_list_t* old_head = qids;
+  qid_list_t* current = qids;
+  while( --cycle > 0 ) { //protect against inf. looping on bad input
+    assert( current );
+    current = current->rest;
+  }
+  qid_list_t* new_tail = current;
+  qid_list_t* new_head = current->rest;
+  if( new_head == NULL )
+    return qids; // cycle is as long as list => identity
+  current = new_head;
+  new_tail->rest = NULL; // snip
+  while( current->rest ) { //seek end
+    current = current->rest;
+  }
+  current->rest = old_head; // paste
+  return new_head;
+}
+
+tangle_t * position_shift( tangle_t * restrict tangle, const qid_t qid ) {
+  assert(tangle);
+  assert(tangle->qstate.size > 0);
+  quantum_state_t new_qstate = shift_to_back( tangle->qstate, qid );
+  qid_list_t    * new_qids   = cycle_qid_list( tangle->qids, new_qstate.cycled );
+  new_qstate.cycled = 0;
+  tangle->qids   = new_qids;
+  tangle->qstate = new_qstate;
+  return tangle;
+}
+
 /***********
  ** QUBIT **
  ***********/
@@ -128,7 +160,7 @@ qubit_t _invalid_qubit_ = { NULL, -1, -1 };
 
 // use this function to return a correct qstate position
 //  libquantum uses an reverse order (least significant == 0)
-int get_target( const qubit_t qubit ) {
+pos_t get_target( const qubit_t qubit ) {
   return qubit.tangle->size - qubit.pos - 1;
 }
 
@@ -288,7 +320,7 @@ void print_qmem( const qmem_t* qmem ) {
   }
   printf("}\n");
   printf("signal map:");
-  print_signal_map( &(qmem->signal_map) );
+  //print_signal_map( &(qmem->signal_map) );
 }
 
 qmem_t* init_qmem( qmem_t* restrict qmem ) {
@@ -629,7 +661,7 @@ double parse_angle( const sexp_t* exp ) {
  ************************/
 
 int
-quantum_diag_measure( qid_t pos, double angle, 
+quantum_diag_measure( pos_t pos, double angle, 
 		      quantum_state_t* restrict qstate, 
 		      quantum_state_t* restrict out )
 {
@@ -662,8 +694,8 @@ quantum_diag_measure( qid_t pos, double angle,
  
   const amplitude factor = cexp(-angle*I);
 
+#ifdef NOPERM
   // Method 1: nested loop per two blocks
-  
   //   011101010110100110101
   //   | odd| ev.| odd| ev.|
   //   |         |    ^----^ : block_size
@@ -682,76 +714,83 @@ quantum_diag_measure( qid_t pos, double angle,
       out->vector[out_block+i] = even - odd * factor;
     }
   }
-
+#else
   // Method 2: permutation step to collect contiguously accessed blocks
   // two permutations: a gather operation followed by block permutation (block permutation is achieved by prefetching/blocked access)
+  quantum_state_t in = shift_to_back( *qstate, pos );
+  // Perform M on the 'last' position
+#pragma omp parallel for
+  for( pos_t i=0; i<num_amplitudes(out); i+=1 ) {
+    const amplitude even = in.vector[i*2];
+    const amplitude odd  = in.vector[i*2+1];
+    out->vector[i] = even - odd * factor;
+  }
+  // measured out a qubit, adjust cycle (one less to cycle)
+  if( out->cycled )
+    out->cycled--;
+#endif
   return 1;
 }
 
 void qop_cz( const qubit_t qubit_1, const qubit_t qubit_2 ) {
-  const qid_t tar1 = get_target(qubit_1);
-  const qid_t tar2 = get_target(qubit_2);
+  quantum_state_t * restrict qstate = get_qstate( qubit_1 );
+  const pos_t tar1 = get_target(qubit_1);
+  const pos_t tar2 = get_target(qubit_2);
   assert( !(invalid(qubit_1) || invalid(qubit_2)) );
   assert( qubit_1.tangle == qubit_2.tangle );
-
-  quantum_state_t * restrict qstate = get_qstate( qubit_1 );
-  const size_t bitmask = 
-    (1 << tar1) | (1 << tar2);
-
+  if( qubit_1.pos + qubit_2.pos == 1 ) // parallel position
 #pragma omp parallel for
-  for( int i=0 ; i<num_amplitudes(qstate) ; i++ ) {
-    /* Flip the target bit of a basis state if the control bit is set */     
-    if( (i & bitmask) == bitmask )
+    for( int i=0 ; i<num_amplitudes(qstate) ; i+=4 )
       qstate->vector[i] *= -1;
+  else {
+    const size_t bitmask = (1 << tar1) | (1 << tar2);
+#pragma omp parallel for
+    for( int i=0 ; i<num_amplitudes(qstate) ; i++ )
+      /* Flip the target bit of a basis state if the control bit is set */     
+      if( (i & bitmask) == bitmask )
+	qstate->vector[i] *= -1;
   }
 }
 
 void qop_x( const qubit_t qubit ) {
   assert( !invalid(qubit) );
-  const qid_t target = get_target(qubit);
+  const pos_t target = get_target(qubit);
   quantum_state_t * restrict qstate = get_qstate(qubit);
-  /* const pos_t block_size   = 1 << target; */
-  /* const pos_t block_stride = 1 << (target + 1); */
-  /* // Method 1: nested loop per two blocks */
-  /* #pragma omp parallel for*/
-  /* for( pos_t even_block=0; */
-  /*      even_block < num_amplitudes(qstate) ;  */
-  /*      even_block += block_stride ) { */
-  /*   amplitude tmp[block_size]; */
-  /*   const pos_t odd_block = even_block + block_size; */
-  /*   // swap, using tmp as scratchpad */
-  /*   //  TODO : might be interesting to see if three for loops might give gcc the chance to better optimize */
-  /*   memcpy( tmp,                       qstate->vector+even_block, sizeof(amplitude)*block_size ); */
-  /*   memcpy( qstate->vector+even_block, qstate->vector+odd_block,  sizeof(amplitude)*block_size ); */
-  /*   memcpy( qstate->vector+odd_block,  tmp,                       sizeof(amplitude)*block_size ); */
-  /* } */
 
-  quantum_state_t out;
-  const uint8_t size = qstate->size;
-  init_quantum_state( &out, size );
-  // how many cyclic left shifts do I need to put target at pos. 0
-  uint8_t cycle_shift_by = (size - target) % size;
-  cycle( qstate, cycle_shift_by, &out );
-  printf("BEFORE: \n");
-  quantum_print_qstate( qstate );
-  printf("AFTER: \n");
-  quantum_print_qstate( &out );
-  
+#ifdef NOPERM
+  const pos_t block_size   = 1 << target;
+  const pos_t block_stride = 1 << (target + 1);
+  // Method 1: nested loop per two blocks
+  #pragma omp parallel for
+  for( pos_t even_block=0;
+       even_block < num_amplitudes(qstate) ;
+       even_block += block_stride ) {
+    amplitude tmp[block_size];
+    const pos_t odd_block = even_block + block_size;
+    // swap, using tmp as scratchpad
+    //  TODO : might be interesting to see if three for loops might give gcc the chance to better optimize
+    memcpy( tmp,                       qstate->vector+even_block, sizeof(amplitude)*block_size );
+    memcpy( qstate->vector+even_block, qstate->vector+odd_block,  sizeof(amplitude)*block_size );
+    memcpy( qstate->vector+odd_block,  tmp,                       sizeof(amplitude)*block_size );
+  }
+#else
+  quantum_state_t out = shift_to_back( *qstate, target );
+  // Perform X on the 'last' position, basically a swap
 #pragma omp parallel for
   for( pos_t i=0; i<num_amplitudes(qstate); i+=2 ) {
     amplitude tmp = out.vector[i];
     out.vector[i] = out.vector[i+1];
     out.vector[i+1] = tmp;
   }
-
-  free_quantum_state( qstate );
   set_qstate( qubit, out );
+#endif
 }  
 
 void qop_z( const qubit_t qubit ) {
   assert( !invalid(qubit) );
-  const qid_t target = get_target(qubit);
+  const pos_t target = get_target(qubit);
   quantum_state_t * restrict qstate = get_qstate(qubit);
+#ifdef NOPERM
   const pos_t block_size   = 1 << target;
   const pos_t block_stride = 1 << (target + 1);
   // Method 1: nested loop per two blocks
@@ -763,7 +802,16 @@ void qop_z( const qubit_t qubit ) {
       const pos_t odd_block = even_block + block_size;
       qstate->vector[odd_block+i] *= -1;
     }
-  }  
+  }
+#else
+  quantum_state_t out = shift_to_back( *qstate, target );
+  // perform Z on the 'last' position
+  #pragma omp parallel for
+  for( pos_t i=1; i < num_amplitudes(qstate); i+=2 ) {
+    out.vector[i] *= -1;
+  }
+  set_qstate( qubit, out );
+#endif
 }
 
 /***************
@@ -802,22 +850,42 @@ void eval_E(sexp_t* exp, qmem_t* qmem) {
       add_dual_tangle(qid1, qid2, qmem);
       return; // already in correct state by construction
     }
-    else
-      // add qid1 to qid2's tangle
+    else {
+#ifndef NOPERM
+      // make sure that qubit_2 is the in last position, 
+      //  perform the necessary permutations if necessary
+      qubit_2.tangle = position_shift( qubit_2.tangle, qubit_2.pos );
+#endif
+      // add qid1 to the 'end' of qid2's tangle
       add_qubit( qid1, qubit_2.tangle );
+    }
   else
-    if( invalid(qubit_2) )
+    if( invalid(qubit_2) ) {
+#ifndef NOPERM
+      // make sure that qubit_1 is the in last position, 
+      //  perform the necessary permutations if necessary
+      qubit_1.tangle = position_shift( qubit_1.tangle, qubit_1.pos );
+#endif
       // add qid2 to qid1's tangle
       add_qubit( qid2, qubit_1.tangle );
+    }
     else
       if( qubit_1.tangle == qubit_2.tangle ) {
 	// if not, qubit entries are already valid
 	qop_cz( qubit_1, qubit_2 );
 	return;
       }
-      else
+      else {
+/* #ifndef NOPERM */
+/*       // make sure that qubit_1 is the in last position,  */
+/*       // make sure that qubit_2 is in the FIRST position */
+/* 	const post_t new_q2_pos = (qubit_2.pos - 1 + qubit_2.tangle.size) % qubit_2.tangle.size; */
+/* 	qubit_1.tangle = position_shift( qubit_1.tangle, qubit_1.pos ); */
+/* 	qubit_2.tangle = position_shift( qubit_2.tangle, new_q2_pos  ); */
+/* #endif */
 	// both tangles are non-NULL, merge both
 	merge_tangles(qubit_1.tangle, qubit_2.tangle, qmem);
+      }
   // get valid qubit entries
   qubit_1 = find_qubit( qid1, qmem );
   qubit_2 = find_qubit( qid2, qmem );

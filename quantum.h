@@ -36,8 +36,8 @@ quantum_state_t * init_quantum_state( quantum_state_t * qstate, uint8_t size ) {
 }
 
 void free_quantum_state( quantum_state_t * qstate ) {
-  qstate->size = 0;
   free( qstate->vector );
+  qstate->size = 0;
   qstate->vector = NULL;
 }
 
@@ -65,46 +65,96 @@ void quantum_normalize( quantum_state_t * restrict qstate ) {
 }
 
   
-int permute(const int i, const int m, const int n) {
+size_t permute(const size_t i, const size_t m, const size_t n) {
   return n * ( i % m ) + i / m;
 }
 
-void cycle(const quantum_state_t * restrict in, 
-	   const int                     cycle,
-	         quantum_state_t * restrict out) {
-  assert( in );
-  assert( out );
-  assert( in->size == out->size );
-  const uint8_t old_cycle = in->cycled;
-  const uint8_t      size = in->size;
-  // to_cycle: how much times do I need to left cycle such that we achieve 'cycle' perm.
-  //    P_k P_l = P_(k+l)%n;  
-  // taking x = to_cycle, k = old_cycle, l = cycle and n = size:
-  //    P_k P_x = P_l  ==> P_x = P_(n-k) P_l ==> P_x = P_(n-k+l)
-  const uint8_t  to_cycle = abs(size - old_cycle + cycle) % size;
-  const size_t     stride = 1<<to_cycle;
-  const size_t  blocksize = 1<<(size - to_cycle);
-  out->cycled = cycle;
-  // dumb permutation to start with
-  for( int i=0; i<num_amplitudes(in); ++i ) {
-    size_t p_i = permute( i, stride, blocksize );
-    out->vector[i] = in->vector[p_i];
+/* void test_permute(size_t m, size_t n) { */
+/*   printf("testing permute m=%u, n=%u: { ",m,n); */
+/*   for( int i=0; i<m*n; ++i ) */
+/*     printf("%u, ", permute(i,m,n)); */
+/*   printf("}\n"); */
+/* } */
+
+
+/* void cycle(const quantum_state_t * restrict in,  */
+/* 	   const unsigned int               cycle, */
+/* 	         quantum_state_t * restrict out) { */
+/*   assert( in ); */
+/*   assert( out ); */
+/*   assert( in->size == out->size ); */
+/*   const uint8_t old_cycle = in->cycled; */
+/*   const uint8_t      size = in->size; */
+/*   // to_cycle: how much times do I need to left cycle such that we achieve 'cycle' perm. */
+/*   //    P_k P_l = P_(k+l)%n;   */
+/*   // taking x = to_cycle, k = old_cycle, l = cycle and n = size: */
+/*   //    P_k P_x = P_l  ==> P_x = P_(n-k) P_l ==> P_x = P_(n-k+l) */
+/*   const uint8_t  to_cycle = cycles_to(qstate, cycle); */
+/*   const size_t     stride = 1<<to_cycle; */
+/*   const size_t  blocksize = 1<<(size - to_cycle); */
+/*   out->cycled = cycle; */
+  
+/*   // dumb permutation to start with */
+/*   for( int i=0; i<num_amplitudes(in); ++i ) { */
+/*     size_t p_i = permute( i, stride, blocksize ); */
+/*     out->vector[i] = in->vector[p_i]; */
+/*   } */
+/* } */
+
+unsigned int 
+cycles_to_back( const quantum_state_t qstate, 
+		const unsigned int    new_cycle ) {
+  return abs(qstate.size - qstate.cycled + new_cycle) % qstate.size;
+}
+
+// permute amplitudes, realizing qubit position cyclic shift such that 
+//  qubit position 'target' comes last
+// In most cases, this function will allocate and deallocate an amplitude vector
+quantum_state_t 
+shift_to_back(       quantum_state_t qstate, 
+	       const pos_t           target ) {
+  assert( qstate.size > 0 );
+  assert( target < qstate.size );
+  const uint8_t cycles = cycles_to_back( qstate, target );
+  if( cycles == 0 || cycles == qstate.size )
+    return qstate;
+  else {
+    quantum_state_t out;
+    init_quantum_state( &out, qstate.size );
+    const size_t    stride = 1<<cycles;
+    const size_t blocksize = 1<<(qstate.size - cycles);
+    // dumb permutation to start with
+    for( int i=0; i<num_amplitudes(&qstate); ++i ) {
+      size_t p_i = permute( i, stride, blocksize );
+      out.vector[i] = qstate.vector[p_i];
+    }
+    free_quantum_state( &qstate );
+    return out;
   }
 }
 
-quantum_state_t* quantum_kronecker( const quantum_state_t * restrict qstate1, 
- 				    const quantum_state_t * restrict qstate2,
-				          quantum_state_t * restrict out ) {
+quantum_state_t shift_back( const quantum_state_t qstate ) {
+  return shift_to_back( qstate, 0 ); 
+}
+							   
+quantum_state_t* 
+quantum_kronecker( const quantum_state_t * restrict qstate1, 
+		   const quantum_state_t * restrict qstate2,
+		         quantum_state_t * restrict out ) {
   const size_t siz1 = num_amplitudes(qstate1);
   const size_t siz2 = num_amplitudes(qstate2);
   assert( qstate1->size + qstate2->size == out->size );
   assert( num_amplitudes(out) == siz1*siz2);
+  quantum_state_t left  = shift_back( *qstate1 );
+  quantum_state_t right = shift_back( *qstate2 );
   #pragma omp parallel for
   for( pos_t i1=0; i1<siz1; ++i1 ) {
     const pos_t block_idx = i1 * siz2;
-    memcpy( out->vector+block_idx, qstate2->vector, sizeof(amplitude)*siz2 );
+    const amplitude left_element = left.vector[i1];
+    // copy all 'right' elements as a block
+    memcpy( out->vector+block_idx, right.vector, sizeof(amplitude)*siz2 );
     for( pos_t i2=0; i2<siz2; ++i2 )
-      out->vector[block_idx+i2] *= qstate1->vector[i1];
+      out->vector[block_idx+i2] *= left_element;
   }
   return out;
 }
@@ -113,9 +163,10 @@ char* binrep(unsigned int val, char *buff, int sz);
 
 void quantum_print_amplitude( const quantum_state_t * qstate, size_t index ) {
   const double          limit = 1.0e-8;
-  const size_t           size = num_amplitudes(qstate);
+  const size_t           size = qstate->size;
   const size_t         stride = 1 << qstate->cycled;
   const size_t      blocksize = 1 << (size - qstate->cycled);
+  // inverted permutation of permute(index, stride, blocksize): P_m,n P_n,m = I
   const size_t permuted_index = permute(index, blocksize, stride);
   const amplitude z = qstate->vector[permuted_index];
   const double prob = quantum_prob(z);
@@ -128,8 +179,10 @@ void quantum_print_amplitude( const quantum_state_t * qstate, size_t index ) {
 }
 
 void quantum_print_qstate( const quantum_state_t * qstate ) {
+  printf("printing quantum state cycled by %u\n", qstate->cycled);
   for( size_t i=0 ; i < num_amplitudes(qstate) ; ++i )
     quantum_print_amplitude( qstate, i );
+  //test_permute(1<<(qstate->size-qstate->cycled), 1<<qstate->cycled);
 }
 
 /* Create a string of binary digits based on the input value.
