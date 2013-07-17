@@ -893,24 +893,41 @@ void eval_M(sexp_t* exp, qmem_t* qmem) {
   if( _verbose_ )
     printf("  measuring qubit %d on angle %2.4f\n", qid, angle);
 
-  //if( _alt_measure_ ) {
-  tangle_t* restrict tangle = qubit.tangle;
-  if( tangle->size > 1 ) {
-    quantum_state_t new_state;
-    quantum_state_t* qstate = &(tangle->qstate);
-    init_quantum_state( &new_state, qstate->size - 1 );
-    signal = quantum_diag_measure( get_target(qubit), angle, qstate, &new_state );
-    // out with the old
-    free_quantum_state( qstate );
-    // in with the new
-    tangle->qstate = new_state;
-  } else { // measuring away a single qubit
-    // do nothing, the state will be destroyed anyway, without risidual state
-    signal = 1;
+  if( _alt_measure_ ) {
+    tangle_t* restrict tangle = qubit.tangle;
+    if( tangle->size > 1 ) {
+      quantum_state_t new_state;
+      quantum_state_t* qstate = &(tangle->qstate);
+      init_quantum_state( &new_state, qstate->size - 1 );
+      signal = quantum_diag_measure( get_target(qubit), angle, qstate, &new_state );
+      // out with the old
+      free_quantum_state( qstate );
+      // in with the new
+      tangle->qstate = new_state;
+    } else { // measuring away a single qubit
+      // do nothing, the state will be destroyed anyway, without risidual state
+      signal = 1;
+    }
+    else {
+      quantum_phase_kick( get_target(qubit), -angle, get_qureg( qubit ) );
+  
+    //printf("   after kick: \n");
+    //  quantum_print_qureg( qubit.tangle->qureg );
+
+    quantum_hadamard( get_target(qubit), get_qureg( qubit ) );
+  
+    //printf("   measuring : \n"     );
+    // quantum_print_qureg( qubit.tangle->qureg );
+    signal = quantum_bmeasure( get_target(qubit), get_qureg( qubit ) );
+
+    // this should be performed, wtf
+    /* quantum_hadamard( get_target(qubit), get_qureg( qubit ) ); */
+    /* quantum_phase_kick( get_target(qubit), angle, get_qureg( qubit ) ); */
+
+    //signal = quantum_diag_measure( get_target(qubit), angle, get_qureg(qubit) );
   }
 
   delete_qubit( qubit, qmem );
-  //}
   
   /* printf("   result is %d\n",signal); */
   set_signal( qid, signal, &qmem->signal_map );
