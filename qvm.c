@@ -687,15 +687,14 @@ quantum_diag_measure( pos_t pos, double angle, const quantum_state_t qstate )
   //   |         |    ^----^ : block_size
   //   |         |         |
   //             ^---------^ : block_stride
-  //odd_block=block_size, out_block=0;
+  const pos_t block_size   = 1 << pos;
+  const pos_t block_stride = 1 << (pos + 1);
+  assert( block_stride <= num_amplitudes(qstate) );
 #pragma omp parallel for collapse(2)
   //         1000000000000 : block_size
   //        10000000000000 : block_stride
   // 0b1110101001111001001
   //         ^- target qubit (position 'pos'), pos=0 is lsb
-  const pos_t block_size   = 1 << pos;
-  const pos_t block_stride = 1 << (pos + 1);
-  assert( block_stride <= num_amplitudes(qstate) );
   for( pos_t even_block=0;
        even_block < num_amplitudes(qstate) ; 
        even_block += block_stride) {
