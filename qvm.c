@@ -665,8 +665,6 @@ quantum_diag_measure( qid_t pos, double angle,
   //   |         |         |
   //             ^---------^ : block_stride
   //odd_block=block_size, out_block=0;
-
-
 #pragma omp parallel for collapse(2)
   for( pos_t even_block=0;
        even_block < num_amplitudes(qstate) ; 
@@ -680,17 +678,9 @@ quantum_diag_measure( qid_t pos, double angle,
     }
   }
 
+  // Method 2: permutation step to collect contiguously accessed blocks
+  // two permutations: a gather operation followed by block permutation (block permutation is achieved by prefetching/blocked access)
 
-
-  
-  /* for( pos_t in_idx=0, out_idx=0; in_idx < num_amplitudes(qstate); in_idx += block_stride, out_idx += block_size ) { */
-  /*   // 'even' block */
-  /*   memcpy( out->vector+out_idx, qstate->vector+in_idx, stride ); */
-  /*   // 'odd' block */
-  /*   for( pos_t i=0; i < block_size, ++i ) { */
-  /*     out->vector[out_idx+i] = out->vector[out_idx+i] + qstate->vector[in_idx+block_size+i] * factor; */
-  /*   } */
-  /* } */
   
   return 1;
 }
@@ -903,24 +893,41 @@ void eval_M(sexp_t* exp, qmem_t* qmem) {
   if( _verbose_ )
     printf("  measuring qubit %d on angle %2.4f\n", qid, angle);
 
-  //if( _alt_measure_ ) {
-  tangle_t* restrict tangle = qubit.tangle;
-  if( tangle->size > 1 ) {
-    quantum_state_t new_state;
-    quantum_state_t* qstate = &(tangle->qstate);
-    init_quantum_state( &new_state, qstate->size - 1 );
-    signal = quantum_diag_measure( get_target(qubit), angle, qstate, &new_state );
-    // out with the old
-    free_quantum_state( qstate );
-    // in with the new
-    tangle->qstate = new_state;
-  } else { // measuring away a single qubit
-    // do nothing, the state will be destroyed anyway, without risidual state
-    signal = 1;
+  if( _alt_measure_ ) {
+    tangle_t* restrict tangle = qubit.tangle;
+    if( tangle->size > 1 ) {
+      quantum_state_t new_state;
+      quantum_state_t* qstate = &(tangle->qstate);
+      init_quantum_state( &new_state, qstate->size - 1 );
+      signal = quantum_diag_measure( get_target(qubit), angle, qstate, &new_state );
+      // out with the old
+      free_quantum_state( qstate );
+      // in with the new
+      tangle->qstate = new_state;
+    } else { // measuring away a single qubit
+      // do nothing, the state will be destroyed anyway, without risidual state
+      signal = 1;
+    }
+    else {
+      quantum_phase_kick( get_target(qubit), -angle, get_qureg( qubit ) );
+  
+    //printf("   after kick: \n");
+    //  quantum_print_qureg( qubit.tangle->qureg );
+
+    quantum_hadamard( get_target(qubit), get_qureg( qubit ) );
+  
+    //printf("   measuring : \n"     );
+    // quantum_print_qureg( qubit.tangle->qureg );
+    signal = quantum_bmeasure( get_target(qubit), get_qureg( qubit ) );
+
+    // this should be performed, wtf
+    /* quantum_hadamard( get_target(qubit), get_qureg( qubit ) ); */
+    /* quantum_phase_kick( get_target(qubit), angle, get_qureg( qubit ) ); */
+
+    //signal = quantum_diag_measure( get_target(qubit), angle, get_qureg(qubit) );
   }
 
   delete_qubit( qubit, qmem );
-  //}
   
   /* printf("   result is %d\n",signal); */
   set_signal( qid, signal, &qmem->signal_map );
@@ -1197,15 +1204,12 @@ int main(int argc, char* argv[]) {
 
   int silent = 0;
   char* output_file = NULL;
-  int program_fd;
+  int program_fd = 0;
   int c;
      
   opterr = 0;
   init_qmem( &qmem );
-  if( str == NULL) {
-    printf("couldn't alloc cstring\n"); abort();
-    //    sexp_errno
-  }
+    
   while ((c = getopt (argc, argv, "isvmf:o::")) != -1)
     switch (c)
       {
@@ -1270,9 +1274,11 @@ int main(int argc, char* argv[]) {
       open(argv[optind], O_RDONLY) : // open the file
       0;                             // otherwise, use stdin
     input_port = init_iowrap( program_fd );
+    if( input_port == NULL ) {
+      printf(" ERROR while wrapping i/o, sexp_errno code is: %d\n", sexp_errno);
+      abort();
+    }
     mc_program = read_one_sexp( input_port );
-    if( program_fd )
-      close( program_fd );
     
     if (!silent) {
       print_sexp_cstr( &str, mc_program, STRING_SIZE );
@@ -1282,6 +1288,8 @@ int main(int argc, char* argv[]) {
     /* sexp_to_dotfile( mc_program->list, "mc_program.dot" ); */
     
     eval( mc_program->list, &qmem );
+    if( program_fd )
+      close( program_fd );
   }
 
   //normalize at the end, not during measurement

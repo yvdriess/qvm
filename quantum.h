@@ -99,17 +99,6 @@ void quantum_print_qstate( const quantum_state_t * qstate ) {
     quantum_print_amplitude( qstate, i );
 }
 
-void test_quantum_state() {
-  quantum_state_t * qstate;
-  init_quantum_state( qstate, 8 );
-  assert(qstate->vector != NULL);
-  assert(qstate->size == 256);
-  srand(293485);
-  for( int i=0; i < num_amplitudes(qstate); ++i )
-    qstate->vector[i] = cexp(rand());
-  free_quantum_state( qstate );
-}
-
 /* Create a string of binary digits based on the input value.
    Input:
        val:  value to convert.
