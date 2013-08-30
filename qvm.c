@@ -142,7 +142,7 @@ qid_list_t* cycle_qid_list( qid_list_t * qids, unsigned int cycle ) {
 tangle_t * position_shift( tangle_t * restrict tangle, const qid_t qid ) {
   assert(tangle);
   assert(tangle->qstate.size > 0);
-  quantum_state_t new_qstate = shift_to_back( tangle->qstate, qid );
+  quantum_state_t new_qstate = cycle_to_back( tangle->qstate, qid );
   qid_list_t    * new_qids   = cycle_qid_list( tangle->qids, new_qstate.cycled );
   new_qstate.cycled = 0;
   tangle->qids   = new_qids;
@@ -710,7 +710,10 @@ quantum_diag_measure( pos_t pos, double angle, const quantum_state_t qstate )
 #else
   // Method 2: permutation step to collect contiguously accessed blocks
   // two permutations: a gather operation followed by block permutation (block permutation is achieved by prefetching/blocked access)
-  quantum_state_t in = shift_to_back( qstate, pos );
+  quantum_state_t in = cycle_to_back( qstate, pos );
+  printf("  After cycle_to_back on qstate: \n");
+  quantum_print_qstate( in );
+  printf("   The in.cycled=%d\n", in.cycled);
   // Perform M on the 'last' position
 #pragma omp parallel for
   for( pos_t i=0; i<num_amplitudes(out); i+=1 ) {
@@ -719,8 +722,7 @@ quantum_diag_measure( pos_t pos, double angle, const quantum_state_t qstate )
     out.vector[i] = even - odd * factor;
   }
   // measured out a qubit, adjust cycle (one less to cycle)
-  if( out.cycled )
-    out.cycled--;
+  out.cycled = in.cycled ? --in.cycled : 0;
 #endif
   return out;
 }
@@ -775,7 +777,7 @@ void qop_x( const qubit_t qubit ) {
     memcpy( qstate.vector+odd_block,  tmp,                      sizeof(amplitude)*block_size );
   }
 #else
-  quantum_state_t out = shift_to_back( qstate, target );
+  quantum_state_t out = cycle_to_back( qstate, target );
   // Perform X on the 'last' position, basically a swap
 #pragma omp parallel for
   for( pos_t i=0; i<num_amplitudes(qstate); i+=2 ) {
@@ -805,7 +807,7 @@ void qop_z( const qubit_t qubit ) {
     }
   }
 #else
-  quantum_state_t out = shift_to_back( qstate, target );
+  quantum_state_t out = cycle_to_back( qstate, target );
   // perform Z on the 'last' position
   #pragma omp parallel for
   for( pos_t i=1; i < num_amplitudes(qstate); i+=2 ) {
@@ -1262,6 +1264,16 @@ int main(int argc, char* argv[]) {
      
   opterr = 0;
   init_qmem( &qmem );
+  
+  /* quantum_state_t test_qstate= NEW_QUANTUM_STATE(3); */
+  /* test_qstate.vector[1] = 1; */
+  /* test_qstate.vector[2] = 2; */
+  /* test_qstate.vector[4] = 3; */
+
+  /* quantum_print_qstate( test_qstate ); */
+  /* quantum_state_t newtest = cycle_to_back( test_qstate, 1 ); */
+  /* quantum_print_qstate( newtest ); */
+  /* FREE_QUANTUM_STATE( newtest ); */
     
   while ((c = getopt (argc, argv, "isvmf:o::")) != -1)
     switch (c)

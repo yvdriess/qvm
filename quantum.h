@@ -109,48 +109,61 @@ size_t permute(const size_t i, const size_t m, const size_t n) {
 /*   } */
 /* } */
 
-unsigned int 
+pos_t
 cycles_to_back( const quantum_state_t qstate, 
-		const unsigned int    new_cycle ) {
-  return abs(qstate.size - qstate.cycled + new_cycle) % qstate.size;
+		const pos_t           target ) {
+  return abs(qstate.size - target) % qstate.size;
 }
 
-unsigned int
-cycled( const quantum_state_t qstate,
-	const pos_t          last_pos ) {
-  return abs(qstate.size - last_pos);
-}
+/* unsigned int */
+/* cycled( const quantum_state_t qstate, */
+/* 	const pos_t          last_pos ) { */
+/*   return abs(qstate.size - last_pos); */
+/* } */
 
+// target (qubit pos in state) after cycling/permutation
+pos_t
+cycled_target( const quantum_state_t qstate,
+	       const pos_t           target ) {
+  return (qstate.cycled + target) % qstate.size;
+}
 
 // permute amplitudes, realizing qubit position cyclic shift such that 
 //  qubit position 'target' comes last
 // This function will allocate a new amplitude vector if non-identity permutation occurs, 
 //  deallocating the old one!
+// Note that 'target' refers to the qubit position in the unclycled qstate (cycled=0)
 quantum_state_t 
-shift_to_back( const quantum_state_t qstate, 
+cycle_to_back( const quantum_state_t qstate, 
 	       const pos_t           target ) {
   assert( qstate.size > 0 );
   assert( target < qstate.size );
-  const uint8_t cycles = cycles_to_back( qstate, target );
-  if( cycles % qstate.size == 0 )
-    return qstate;
+  const pos_t actual_target = cycled_target( qstate, target );
+  const pos_t todo_cycles = cycles_to_back( qstate, actual_target );
+  if( todo_cycles % qstate.size == 0 )
+    return qstate; // already in the good position
   else {
     quantum_state_t out = NEW_QUANTUM_STATE( qstate.size );
-    const size_t    stride = 1<<cycles;
-    const size_t blocksize = 1<<(qstate.size - cycles);
-    // dumb permutation to start with
+    const size_t    stride = 1 << todo_cycles;
+    const size_t blocksize = 1 << (qstate.size - todo_cycles);
+    // dumb permutation to start with, 
+    //  will have to be change into a parallel/factorized permutation
+    printf("Permuting target: %i by shift %i left\n", target, todo_cycles);
     for( int i=0; i<num_amplitudes(qstate); ++i ) {
-      size_t p_i = permute( i, blocksize, stride );
+      size_t p_i = permute( i, stride, blocksize );
       out.vector[i] = qstate.vector[p_i];
     }
-    out.cycled = cycled(qstate, target);
+    out.cycled = (qstate.cycled + todo_cycles) % qstate.size;
     FREE_QUANTUM_STATE( qstate );
     return out;
   }
 }
 
-quantum_state_t shift_back( const quantum_state_t qstate ) {
-  return shift_to_back( qstate, 0 ); 
+// Permutes the qstate amplitude vector to reflect the actual qid_list.
+//  In other words cycle such thatqstate.cycled ==0
+quantum_state_t 
+cycle_out( const quantum_state_t qstate ) {
+  return cycle_to_back( qstate, 0 ); 
 }
 
 // Combines two quantum states by the Kronecker (aka tensor) product.
@@ -161,8 +174,8 @@ quantum_kronecker( const quantum_state_t qstate1,
   const size_t siz1 = num_amplitudes(qstate1);
   const size_t siz2 = num_amplitudes(qstate2);
   quantum_state_t out = NEW_QUANTUM_STATE( qstate1.size + qstate2.size );
-  quantum_state_t left  = shift_back( qstate1 );
-  quantum_state_t right = shift_back( qstate2 );
+  quantum_state_t left  = cycle_out( qstate1 );
+  quantum_state_t right = cycle_out( qstate2 );
   #pragma omp parallel for
   for( pos_t i1=0; i1<siz1; ++i1 ) {
     const pos_t block_idx = i1 * siz2;
