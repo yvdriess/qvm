@@ -401,8 +401,8 @@ add_dual_tangle( const qid_t qid1,
 
   // init quantum state
   tangle->qstate = NEW_QUANTUM_STATE(2);
-  quantum_copy_qstate( &_proto_dual_diag_qubit_,
-		       &tangle->qstate );
+  quantum_copy_qstate( _proto_dual_diag_qubit_,
+		       tangle->qstate );
   return tangle;
 }
 
@@ -418,8 +418,8 @@ add_tangle( const qid_t qid,
   qmem->size += 1;
   // init quantum state
   tangle->qstate = NEW_QUANTUM_STATE(1);
-  quantum_copy_qstate(&_proto_diag_qubit_,
- 		      &tangle->qstate);
+  quantum_copy_qstate(_proto_diag_qubit_,
+ 		      tangle->qstate);
   return tangle;
 }
 
@@ -711,9 +711,9 @@ quantum_diag_measure( pos_t pos, double angle, const quantum_state_t qstate )
   // Method 2: permutation step to collect contiguously accessed blocks
   // two permutations: a gather operation followed by block permutation (block permutation is achieved by prefetching/blocked access)
   quantum_state_t in = cycle_to_back( qstate, pos );
-  printf("  After cycle_to_back on qstate: \n");
-  quantum_print_qstate( in );
-  printf("   The in.cycled=%d\n", in.cycled);
+  //  printf("  After cycle_to_back on qstate: \n");
+  //quantum_print_qstate( in );
+  //printf("   The in.cycled=%d\n", in.cycled);
   // Perform M on the 'last' position
 #pragma omp parallel for
   for( pos_t i=0; i<num_amplitudes(out); i+=1 ) {
@@ -1358,12 +1358,13 @@ int main(int argc, char* argv[]) {
   }
 
   //normalize at the end, not during measurement
-
+  // perform any deferred permutations on the qstate
   int tally=0;
   for( int t=0; tally<qmem.size; ++t ) {
     tangle_t* tangle = qmem.tangles[t];
     if( tangle ) {
       quantum_normalize( tangle->qstate );
+      tangle->qstate = cycle_out( tangle->qstate );
       ++tally;
     }
   }

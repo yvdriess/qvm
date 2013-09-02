@@ -49,10 +49,10 @@ size_t num_amplitudes( const quantum_state_t qstate ) {
 /*   qstate->vector = NULL; */
 /* } */
 
-void quantum_copy_qstate( const quantum_state_t * restrict src,
-			        quantum_state_t * restrict dst ) {
-  assert(dst->size == src->size);
-  memcpy( dst->vector, src->vector, sizeof(amplitude) * num_amplitudes(*src) );
+void quantum_copy_qstate( quantum_state_t src,
+			  quantum_state_t dst ) {
+  assert(dst.size == src.size);
+  memcpy( dst.vector, src.vector, sizeof(amplitude) * num_amplitudes(src) );
 }
 
 float quantum_prob( amplitude amp ) {
@@ -148,7 +148,7 @@ cycle_to_back( const quantum_state_t qstate,
     const size_t blocksize = 1 << (qstate.size - todo_cycles);
     // dumb permutation to start with, 
     //  will have to be change into a parallel/factorized permutation
-    printf("Permuting target: %i by shift %i left\n", target, todo_cycles);
+    //    printf("Permuting target: %i by shift %i left\n", target, todo_cycles);
     for( int i=0; i<num_amplitudes(qstate); ++i ) {
       size_t p_i = permute( i, stride, blocksize );
       out.vector[i] = qstate.vector[p_i];
